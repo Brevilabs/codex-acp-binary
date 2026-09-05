@@ -52,6 +52,9 @@ def build():
         "https://github.com/agentclientprotocol/codex-acp.git",
         str(source),
     )
+    # Preserve upstream lockfile bytes even with Windows global autocrlf enabled.
+    # https://github.com/Brevilabs/obsidian-copilot-private/issues/378
+    run("git", "config", "core.autocrlf", "false", cwd=source)
     run("git", "checkout", "--detach", pins["acpCommit"], cwd=source)
     if sha256(source / "package-lock.json") != pins["lockSha256"]:
         raise SystemExit("Upstream lockfile does not match pinned digest")

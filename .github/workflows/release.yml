@@ -21,6 +21,8 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - run: python -m unittest discover -s tests -p 'test_*.py'
       - id: plan
         run: python scripts/release.py discover
@@ -42,6 +44,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: candidate-inputs
@@ -62,16 +66,13 @@ jobs:
           path: dist/*
           retention-days: 3
           if-no-files-found: error
-  complete:
+  verify:
     needs: [discover, build]
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-      statuses: write
-      id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: package-*
@@ -82,15 +83,36 @@ jobs:
           name: candidate-inputs
       - run: cp candidate-inputs.json inputs.json
       - run: python scripts/release.py verify
-      - if: github.event_name != 'pull_request'
-        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+  complete:
+    needs: verify
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      statuses: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: package-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: candidate-inputs
+      - run: cp candidate-inputs.json inputs.json
+      - run: python scripts/release.py verify
+      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
           subject-path: dist/*
-      - if: github.event_name != 'pull_request'
-        run: python scripts/release.py record
+      - run: python scripts/release.py record
         env:
           GH_TOKEN: ${{ github.token }}
-      - if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.APPROVED_PACKAGING_SHA == github.sha
+      - if: vars.APPROVED_PACKAGING_SHA == github.sha
         run: python scripts/release.py publish
         env:
           GH_TOKEN: ${{ github.token }}
