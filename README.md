@@ -18,7 +18,8 @@ python3 scripts/build.py
 ```
 
 The command fetches the pinned ACP commit, verifies its lockfile digest, installs locked
-dependencies, runs upstream tests/typecheck, compiles the adapter, and copies the full
+dependencies, typechecks upstream on every OS, runs its full suite on POSIX hosts,
+compiles the adapter, and copies the full
 native Codex distribution. Clean-environment tests relocate the package into a path
 with spaces before the ZIP is produced. To rebuild, remove the generated `build/`
 directory first. `dist/` contains the archive and JSON with exact inputs, SHA-256 and
@@ -39,7 +40,10 @@ remain open. See the release workflow below.
 PRs build the reviewed `inputs.json` on all six native standard GitHub runners.
 Nightly and manual runs resolve the latest stable upstream tag to an exact commit,
 lockfile digest and locked Codex version/commit. Bun and packaging revision stay pinned.
-Candidate pins are saved with each archive. Source layout changes stop the build for
+Candidate pins are saved with each archive. Upstream tests use POSIX path snapshots
+and a Windows `.cmd` fixture incompatible with our direct native launch; Windows
+validation uses typechecking and the real packaged executable smoke tests instead.
+All six targets must pass those package tests. Source layout changes stop the build for
 review rather than silently dropping our native Windows launch patch.
 
 Nightly runs skip published versions and successfully tested candidates with identical

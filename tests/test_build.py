@@ -122,3 +122,21 @@ class BuildInputs(unittest.TestCase):
                     (root / "build/upstream/package-lock.json").read_bytes(),
                     (upstream / "package-lock.json").read_bytes(),
                 )
+
+    def test_upstream_checks_typecheck_every_target_and_run_posix_suite_on_posix(self):
+        """https://github.com/Brevilabs/obsidian-copilot-private/issues/378"""
+        for target in (
+            "darwin-arm64",
+            "darwin-x64",
+            "linux-arm64",
+            "linux-x64",
+            "win32-arm64",
+            "win32-x64",
+        ):
+            with self.subTest(target=target), patch.object(build, "run") as run:
+                build.check_upstream(pathlib.Path("source"), target)
+                commands = [call.args for call in run.call_args_list]
+                self.assertEqual(commands[-1], ("npm", "run", "typecheck"))
+                self.assertEqual(
+                    ("npm", "test") in commands, not target.startswith("win32-")
+                )
