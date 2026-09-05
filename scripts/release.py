@@ -9,7 +9,7 @@ import subprocess
 import sys
 import urllib.request
 
-from targets import TARGETS
+from targets import TARGETS, bun_target
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -138,10 +138,7 @@ def main():
                             {
                                 "target": t,
                                 "runner": r[0],
-                                "bun": "bun-"
-                                + t.replace("win32", "windows").replace(
-                                    "arm64", "aarch64"
-                                ),
+                                "bun": bun_target(t).replace("arm64", "aarch64"),
                             }
                             for t, r in TARGETS.items()
                         ]

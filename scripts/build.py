@@ -10,7 +10,7 @@ import sys
 import urllib.request
 import zipfile
 
-from targets import native_target
+from targets import bun_target, native_target
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -108,13 +108,7 @@ def build():
         "--minify",
         "--sourcemap",
         "--compile",
-        "--target=bun-"
-        + target.replace("win32", "windows")
-        + (
-            "-baseline"
-            if target.endswith("x64") and not target.startswith("darwin")
-            else ""
-        ),
+        "--target=" + bun_target(target),
         "--outfile",
         str(package / ("codex-acp" + extension)),
         cwd=source,

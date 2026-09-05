@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
 import release
-from targets import TARGETS, native_target
+from targets import TARGETS, bun_target, native_target
 
 ISSUE = "https://github.com/Brevilabs/obsidian-copilot-private/issues/378"
 
@@ -284,3 +284,17 @@ class Targets(unittest.TestCase):
             self.assertRaises(SystemExit),
         ):
             native_target()
+
+    def test_bun_install_and_compile_share_native_cpu_variant(self):
+        """https://github.com/Brevilabs/obsidian-copilot-private/issues/378"""
+        expected = {
+            "darwin-arm64": "bun-darwin-arm64",
+            "darwin-x64": "bun-darwin-x64-baseline",
+            "linux-arm64": "bun-linux-arm64",
+            "linux-x64": "bun-linux-x64-baseline",
+            "win32-arm64": "bun-windows-arm64",
+            "win32-x64": "bun-windows-x64-baseline",
+        }
+        for target, compiler in expected.items():
+            with self.subTest(target=target):
+                self.assertEqual(bun_target(target), compiler)

@@ -27,3 +27,14 @@ def native_target():
     if target not in TARGETS:
         raise SystemExit(f"Unsupported native platform: {platform.system()} {machine}")
     return target, TARGETS[target][1]
+
+
+def bun_target(target):
+    # Install the same CPU variant we compile; cross-variant downloads can fail
+    # during Windows compilation, before the native package can be tested.
+    # https://github.com/Brevilabs/obsidian-copilot-private/issues/378
+    return (
+        "bun-"
+        + target.replace("win32", "windows")
+        + ("-baseline" if target.endswith("x64") else "")
+    )

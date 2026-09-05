@@ -28,7 +28,7 @@ The native build matrix is below. These are CI environments, not verified minimu
 | Target | Native runner | Adapter CPU variant |
 | --- | --- | --- |
 | darwin-arm64 | macos-15 | ARM64 |
-| darwin-x64 | macos-15-intel | x64 |
+| darwin-x64 | macos-15-intel | x64 baseline |
 | linux-arm64 | ubuntu-24.04-arm | ARM64 |
 | linux-x64 | ubuntu-24.04 | x64 baseline |
 | win32-arm64 | windows-11-arm | ARM64 |
