@@ -2,7 +2,10 @@
 
 import importlib.util
 import pathlib
+import sys
 import tempfile
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
 import unittest
 from unittest.mock import patch
 
@@ -16,10 +19,14 @@ spec.loader.exec_module(build)
 class BuildInputs(unittest.TestCase):
     def test_wrong_platform_does_not_start_build(self):
         with (
-            patch.object(build.platform, "system", return_value="Linux"),
+            patch.object(
+                build,
+                "native_target",
+                side_effect=SystemExit("Unsupported native platform"),
+            ),
             patch.object(build, "run") as run,
         ):
-            with self.assertRaisesRegex(SystemExit, "native macOS ARM64"):
+            with self.assertRaisesRegex(SystemExit, "Unsupported native platform"):
                 build.build()
             run.assert_not_called()
 

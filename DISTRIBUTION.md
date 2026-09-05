@@ -1,6 +1,6 @@
 # Distribution gates
 
-These archives are local evaluation builds. Do not publish them as user releases yet.
+These archives are evaluation builds (local or short-lived CI artifacts). Do not publish them as user releases yet.
 
 ## Licenses and source
 
@@ -17,13 +17,28 @@ include its required material in each archive before enabling release publicatio
 See [Bun licensing](https://bun.com/docs/project/license) and the versions and commits
 in `provenance.json`. Source links alone do not establish compliance.
 
-Our modification is the adapter entrypoint, which selects the adjacent bundled native
-Codex executable. It preserves `CODEX_HOME` and never copies credentials. This is an
+Our modifications are the adapter entrypoint, which selects the adjacent bundled native
+Codex executable, and direct native process spawning in both upstream launch sites. It preserves `CODEX_HOME` and never copies credentials. This is an
 independent Brevilabs package, not an official OpenAI release.
 
-## macOS support and signing
+## Platform support and signing
 
-This slice builds only on native Apple Silicon macOS. [Bun documents macOS 13 or newer](https://bun.com/docs/installation#cpu-requirements)
+The native build matrix is below. These are CI environments, not verified minimum OS versions.
+
+| Target | Native runner | Adapter CPU variant |
+| --- | --- | --- |
+| darwin-arm64 | macos-15 | ARM64 |
+| darwin-x64 | macos-15-intel | x64 |
+| linux-arm64 | ubuntu-24.04-arm | ARM64 |
+| linux-x64 | ubuntu-24.04 | x64 baseline |
+| win32-arm64 | windows-11-arm | ARM64 |
+| win32-x64 | windows-2025 | x64 baseline |
+
+Linux ships Codex musl binaries but a glibc Bun adapter; it is not an Alpine/musl package.
+Windows packages are unsigned; test SmartScreen and decide signing before release.
+CPU, libc and kernel floors must be verified for the complete package, including helpers.
+
+ [Bun documents macOS 13 or newer](https://bun.com/docs/installation#cpu-requirements)
 as its minimum, but the complete package's oldest supported version remains unverified.
 Do not advertise a supported floor until Codex and every helper pass there.
 
