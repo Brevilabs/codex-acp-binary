@@ -13,8 +13,6 @@ import threading
 import time
 import unittest
 
-PACKAGE = pathlib.Path(sys.argv.pop(1)).resolve()
-
 
 class PackageSmoke(unittest.TestCase):
     @classmethod
@@ -163,7 +161,9 @@ class PackageSmoke(unittest.TestCase):
                 self.assertEqual(process.returncode, 0)
         finally:
             try:
-                if process.poll() is None or os.name != "nt":
+                # Once reaped, this PID no longer identifies a group we own.
+                # https://github.com/Brevilabs/obsidian-copilot-private/issues/378
+                if process.poll() is None:
                     self.kill_tree(process, signal.SIGKILL if os.name != "nt" else None)
             except ProcessLookupError:
                 pass
@@ -191,4 +191,5 @@ class PackageSmoke(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    PACKAGE = pathlib.Path(sys.argv.pop(1)).resolve()
     unittest.main()
