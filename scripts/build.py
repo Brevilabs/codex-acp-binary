@@ -146,7 +146,7 @@ def build():
         ),
         "target": target,
         "buildPlatform": platform.platform(),
-        "releaseApproved": False,
+        "distributionApproval": "See release asset distribution-approval.json",
     }
     (package / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     # Test the exact package before making the local archive; no public publisher here.

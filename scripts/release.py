@@ -115,7 +115,39 @@ def verify(dist, pins, commit):
     return sorted(dist.glob("*.zip"))
 
 
+def validate_candidate_run(run, commit):
+    if (
+        run["head_sha"] != commit
+        or run["head_branch"] != "main"
+        or run["event"] not in ("schedule", "workflow_dispatch")
+        or run["path"] != ".github/workflows/release.yml"
+        or run["conclusion"] != "success"
+    ):
+        raise ValueError("Candidate must be a successful trusted build of this commit")
+
+
+def write_checksums(dist):
+    path = dist / "SHA256SUMS"
+    path.write_text(
+        "".join(
+            f"{digest(p)}  {p.name}\n"
+            for p in sorted(dist.iterdir())
+            if p.suffix in (".zip", ".json")
+        )
+    )
+    return path
+
+
 def main():
+    if sys.argv[1] == "candidate":
+        run_id = os.environ["CANDIDATE_RUN_ID"]
+        if not re.fullmatch(r"[1-9][0-9]*", run_id):
+            raise ValueError("Candidate run ID must be a positive integer")
+        validate_candidate_run(
+            api(f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{run_id}"),
+            os.environ["GITHUB_SHA"],
+        )
+        return
     pins = json.loads((ROOT / "inputs.json").read_text())
     if sys.argv[1] == "discover":
         if os.environ["GITHUB_EVENT_NAME"] != "pull_request":
@@ -149,13 +181,7 @@ def main():
     else:
         dist = ROOT / "dist"
         archives = verify(dist, pins, os.environ["GITHUB_SHA"])
-        (dist / "SHA256SUMS").write_text(
-            "".join(
-                f"{digest(p)}  {p.name}\n"
-                for p in sorted(dist.iterdir())
-                if p.suffix in (".zip", ".json")
-            )
-        )
+        checksums = write_checksums(dist)
         if sys.argv[1] == "verify":
             return
         if sys.argv[1] == "record":
@@ -177,18 +203,38 @@ def main():
                 check=True,
             )
             return
-        # Approval binds both executable packaging code and all candidate input pins.
+        # Approval binds packaging code, input pins and the exact candidate bytes.
         # https://github.com/Brevilabs/obsidian-copilot-private/issues/378
         if (
             os.environ.get("APPROVED_INPUTS_SHA256") != digest(ROOT / "inputs.json")
             or os.environ.get("APPROVED_PACKAGING_SHA") != os.environ["GITHUB_SHA"]
+            or os.environ.get("APPROVED_ARTIFACTS_SHA256") != digest(checksums)
             or not os.environ.get("DISTRIBUTION_EVIDENCE_URL", "").startswith(
                 "https://"
             )
         ):
             raise ValueError(
-                "Distribution gates are not approved for these exact inputs and packaging commit"
+                "Distribution gates are not approved for these exact artifacts, inputs and packaging commit"
             )
+        (dist / "distribution-approval.json").write_text(
+            json.dumps(
+                {
+                    "releaseApproved": True,
+                    "packagingCommit": os.environ["GITHUB_SHA"],
+                    "inputsSha256": digest(ROOT / "inputs.json"),
+                    "candidateChecksumsSha256": digest(checksums),
+                    "evidenceUrl": os.environ["DISTRIBUTION_EVIDENCE_URL"],
+                    "artifacts": {
+                        p.name: digest(p)
+                        for p in sorted(dist.iterdir())
+                        if p.suffix in (".zip", ".json")
+                    },
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        write_checksums(dist)
         # A failed upload remains a draft: bump packagingRevision for retry, never overwrite it.
         subprocess.run(
             [

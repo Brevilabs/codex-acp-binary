@@ -84,6 +84,7 @@ class Release(unittest.TestCase):
             "GITHUB_SHA": "abc",
             "APPROVED_PACKAGING_SHA": "abc",
             "APPROVED_INPUTS_SHA256": release.digest(self.root / "inputs.json"),
+            "APPROVED_ARTIFACTS_SHA256": release.digest(release.write_checksums(self.dist)),
             "DISTRIBUTION_EVIDENCE_URL": "https://example.com/audit",
         }
         with (
@@ -98,6 +99,69 @@ class Release(unittest.TestCase):
                 release.main()
             self.assertEqual(run.call_count, 1)
             self.assertIn("--draft", run.call_args.args[0])
+
+    def test_each_approval_binding_is_required(self):
+        approved = {
+            "GITHUB_SHA": "abc",
+            "APPROVED_PACKAGING_SHA": "abc",
+            "APPROVED_INPUTS_SHA256": release.digest(self.root / "inputs.json"),
+            "APPROVED_ARTIFACTS_SHA256": release.digest(release.write_checksums(self.dist)),
+            "DISTRIBUTION_EVIDENCE_URL": "https://example.com/audit",
+        }
+        for key in approved.keys() - {"GITHUB_SHA"}:
+            for value in ("", "wrong"):
+                with (
+                    self.subTest(key=key, value=value),
+                    patch.object(release, "ROOT", self.root),
+                    patch.object(sys, "argv", ["release.py", "publish"]),
+                    patch.dict(os.environ, {**approved, key: value}, clear=True),
+                    patch.object(release.subprocess, "run") as run,
+                ):
+                    with self.assertRaisesRegex(ValueError, "not approved"):
+                        release.main()
+                    run.assert_not_called()
+
+    def test_changed_candidate_bytes_reject_previously_granted_approval(self):
+        environment = {
+            "GITHUB_SHA": "abc",
+            "APPROVED_PACKAGING_SHA": "abc",
+            "APPROVED_INPUTS_SHA256": release.digest(self.root / "inputs.json"),
+            "APPROVED_ARTIFACTS_SHA256": release.digest(release.write_checksums(self.dist)),
+            "DISTRIBUTION_EVIDENCE_URL": "https://example.com/audit",
+        }
+        # A rebuilt archive is internally valid but is not the vetted archive.
+        manifest_path = next(self.dist.glob("*.json"))
+        manifest = json.loads(manifest_path.read_text())
+        archive = self.dist / manifest["archive"]
+        archive.write_bytes(b"rebuilt archive with different timestamps")
+        manifest["sha256"] = release.digest(archive)
+        manifest_path.write_text(json.dumps(manifest))
+        self.assertEqual(len(release.verify(self.dist, self.pins, "abc")), 6)
+        with (
+            patch.object(release, "ROOT", self.root),
+            patch.object(sys, "argv", ["release.py", "publish"]),
+            patch.dict(os.environ, environment, clear=True),
+            patch.object(release.subprocess, "run") as run,
+        ):
+            with self.assertRaisesRegex(ValueError, "not approved"):
+                release.main()
+            run.assert_not_called()
+            self.assertFalse((self.dist / "distribution-approval.json").exists())
+
+    def test_only_successful_trusted_candidate_run_can_be_promoted(self):
+        candidate = {
+            "head_sha": "abc", "head_branch": "main", "event": "schedule",
+            "path": ".github/workflows/release.yml", "conclusion": "success",
+        }
+        release.validate_candidate_run(candidate, "abc")
+        release.validate_candidate_run({**candidate, "event": "workflow_dispatch"}, "abc")
+        for change in [
+            {"head_sha": "old"}, {"head_branch": "feature"},
+            {"event": "pull_request"}, {"path": ".github/workflows/other.yml"},
+            {"conclusion": "failure"}, {"conclusion": None},
+        ]:
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                release.validate_candidate_run({**candidate, **change}, "abc")
 
     def test_existing_release_including_draft_skips_build(self):
         """https://github.com/Brevilabs/obsidian-copilot-private/issues/378"""
@@ -210,6 +274,7 @@ class Release(unittest.TestCase):
             "GITHUB_SHA": "abc",
             "APPROVED_PACKAGING_SHA": "abc",
             "APPROVED_INPUTS_SHA256": release.digest(self.root / "inputs.json"),
+            "APPROVED_ARTIFACTS_SHA256": release.digest(release.write_checksums(self.dist)),
             "DISTRIBUTION_EVIDENCE_URL": "https://example.com/audit",
         }
         with (
@@ -218,12 +283,21 @@ class Release(unittest.TestCase):
             patch.dict(os.environ, environment, clear=True),
             patch.object(release.subprocess, "run") as run,
         ):
+            original = {p.name: p.read_bytes() for p in self.dist.iterdir()}
             release.main()
+            approval = json.loads((self.dist / "distribution-approval.json").read_text())
+            self.assertTrue(approval["releaseApproved"])
+            self.assertEqual(approval["candidateChecksumsSha256"], environment["APPROVED_ARTIFACTS_SHA256"])
+            self.assertEqual(approval["evidenceUrl"], environment["DISTRIBUTION_EVIDENCE_URL"])
+            for name, content in original.items():
+                if name != "SHA256SUMS":
+                    self.assertEqual((self.dist / name).read_bytes(), content)
+                    self.assertEqual(approval["artifacts"][name], hashlib.sha256(content).hexdigest())
             self.assertEqual(run.call_count, 2)
             self.assertIn("--draft", run.call_args_list[0].args[0])
             self.assertIn("--draft=false", run.call_args_list[1].args[0])
             self.assertEqual(
-                len((self.dist / "SHA256SUMS").read_text().splitlines()), 12
+                len((self.dist / "SHA256SUMS").read_text().splitlines()), 13
             )
 
     def test_pull_request_uses_reviewed_pins_without_release_discovery(self):

@@ -83,6 +83,11 @@ jobs:
           name: candidate-inputs
       - run: cp candidate-inputs.json inputs.json
       - run: python scripts/release.py verify
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: candidate-checksums
+          path: dist/SHA256SUMS
+          retention-days: 3
   complete:
     needs: verify
     if: github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
@@ -112,10 +117,3 @@ jobs:
       - run: python scripts/release.py record
         env:
           GH_TOKEN: ${{ github.token }}
-      - if: vars.APPROVED_PACKAGING_SHA == github.sha
-        run: python scripts/release.py publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-          APPROVED_INPUTS_SHA256: ${{ vars.APPROVED_INPUTS_SHA256 }}
-          APPROVED_PACKAGING_SHA: ${{ vars.APPROVED_PACKAGING_SHA }}
-          DISTRIBUTION_EVIDENCE_URL: ${{ vars.DISTRIBUTION_EVIDENCE_URL }}

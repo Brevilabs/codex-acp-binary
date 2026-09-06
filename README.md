@@ -53,14 +53,26 @@ completion. Intermediate artifacts expire after three days. An interrupted relea
 upload remains a draft and is never overwritten: increment `packagingRevision` to retry.
 
 Publication is disabled until owners complete [DISTRIBUTION.md](DISTRIBUTION.md).
-On the default branch, set repository variables `APPROVED_PACKAGING_SHA` to the reviewed
-packaging commit, `APPROVED_INPUTS_SHA256` to the SHA-256 of the exact candidate input
-JSON, and `DISTRIBUTION_EVIDENCE_URL` to the approved compliance, signing and authenticated
-test evidence. Then manually rerun that candidate. These approvals must change whenever
-inputs or packaging code change. Recording an approval does not add missing license
-material or sign a binary; those gates require implementation/evidence before approval.
+Select a successful **Native packages** run from `main` and vet its downloaded
+`package-*` artifacts. Set repository variables `APPROVED_PACKAGING_SHA` to that run's
+commit, `APPROVED_INPUTS_SHA256` to the SHA-256 of its exact `candidate-inputs.json`,
+`APPROVED_ARTIFACTS_SHA256` to the SHA-256 of its `candidate-checksums/SHA256SUMS` file,
+and `DISTRIBUTION_EVIDENCE_URL` to the compliance, signing and authenticated test evidence
+covering those exact archive hashes. Check every archive and manifest against that
+checksum file before approval.
 
-Each release contains six ZIPs, matching JSON manifests and `SHA256SUMS`. Each ZIP holds
+Dispatch **Publish vetted candidate** on `main` with that candidate's workflow run ID.
+It downloads the existing artifacts without rebuilding and rejects PR runs, failed runs,
+other workflows, a different packaging commit, or bytes that do not match the approval.
+Publish before the three-day artifact retention expires and before `main` advances from
+the approved commit. If either happens, build and vet a new candidate. Rerunning a build
+requires approving its resulting hashes again. Recording an approval does not add missing
+license material or sign a binary; those gates require implementation/evidence before
+approval.
+Each release contains six ZIPs, matching JSON manifests, `distribution-approval.json` and
+`SHA256SUMS`. Build provenance points to the separate approval asset. That asset records
+`releaseApproved: true`, the evidence URL and hashes of all approved archives and manifests;
+publication leaves their bytes unchanged. Each ZIP holds
 one `codex-acp-v<VERSION>-r<REVISION>-<TARGET>/` directory; Windows uses `codex-acp.exe`.
 The manifest records compressed/extracted sizes and all input pins. GitHub build
 attestations cover archives and manifests; after downloading, run `sha256sum -c SHA256SUMS`
