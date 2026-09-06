@@ -1,0 +1,119 @@
+name: Native packages
+on:
+  pull_request:
+  schedule:
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: Stable upstream tag (empty selects latest)
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: packages-${{ github.event_name == 'pull_request' && github.ref || 'release' }}
+  cancel-in-progress: false
+jobs:
+  discover:
+    runs-on: ubuntu-24.04
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: python -m unittest discover -s tests -p 'test_*.py'
+      - id: plan
+        run: python scripts/release.py discover
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_TAG: ${{ inputs.upstream_tag }}
+      - if: steps.plan.outputs.build == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: candidate-inputs
+          path: candidate-inputs.json
+          retention-days: 3
+  build:
+    needs: discover
+    if: needs.discover.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: candidate-inputs
+      - run: python -c "import shutil; shutil.copyfile('candidate-inputs.json', 'inputs.json')"
+      - id: bun
+        run: python -c "import json,os; p=json.load(open('inputs.json')); open(os.environ['GITHUB_OUTPUT'],'a').write('version='+p['bunRevision'].split('+')[0]+'\n')"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.16.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: ${{ steps.bun.outputs.version }}
+          bun-download-url: https://github.com/oven-sh/bun/releases/download/bun-v${{ steps.bun.outputs.version }}/${{ matrix.bun }}.zip
+      - run: python scripts/build.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: package-${{ matrix.target }}
+          path: dist/*
+          retention-days: 3
+          if-no-files-found: error
+  verify:
+    needs: [discover, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: package-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: candidate-inputs
+      - run: cp candidate-inputs.json inputs.json
+      - run: python scripts/release.py verify
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: candidate-checksums
+          path: dist/SHA256SUMS
+          retention-days: 3
+  complete:
+    needs: verify
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      statuses: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: package-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: candidate-inputs
+      - run: cp candidate-inputs.json inputs.json
+      - run: python scripts/release.py verify
+      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: dist/*
+      - run: python scripts/release.py record
+        env:
+          GH_TOKEN: ${{ github.token }}

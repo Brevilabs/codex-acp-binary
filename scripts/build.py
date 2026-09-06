@@ -1,4 +1,4 @@
-"""Build a local, unsigned macOS ARM64 evaluation archive from pinned inputs."""
+"""Build a native evaluation archive from pinned inputs."""
 
 import hashlib
 import json
@@ -6,28 +6,49 @@ import pathlib
 import platform
 import shutil
 import subprocess
+import sys
 import urllib.request
+import zipfile
+
+from targets import bun_target, native_target
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 def run(*args, cwd=ROOT):
-    subprocess.run(args, cwd=cwd, check=True)
+    subprocess.run([shutil.which(args[0]) or args[0], *args[1:]], cwd=cwd, check=True)
 
 
 def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def check_upstream(source, target):
+    # Upstream tests require POSIX snapshots and a .cmd shim on Windows; our
+    # native-only launcher is verified by real package smoke tests on every OS.
+    # https://github.com/Brevilabs/obsidian-copilot-private/issues/378
+    if not target.startswith("win32-"):
+        run("npm", "test", cwd=source)
+    run("npm", "run", "typecheck", cwd=source)
+
+
 def build():
     pins = json.loads((ROOT / "inputs.json").read_text())
-    if (platform.system(), platform.machine()) != ("Darwin", "arm64"):
-        raise SystemExit("This build requires native macOS ARM64")
+    target, triple = native_target()
+    extension = ".exe" if target.startswith("win32") else ""
     if (
         subprocess.check_output(["bun", "--revision"], text=True).strip()
         != pins["bunRevision"]
     ):
         raise SystemExit(f"Install Bun {pins['bunRevision']} before building")
+    if (
+        subprocess.check_output(
+            ["bun", "-e", "console.log(process.platform + '-' + process.arch)"],
+            text=True,
+        ).strip()
+        != target
+    ):
+        raise SystemExit("Bun must match the native runner architecture")
     work = ROOT / "build"
     if work.exists():
         raise SystemExit("Remove build/ before starting a clean build")
@@ -40,6 +61,9 @@ def build():
         "https://github.com/agentclientprotocol/codex-acp.git",
         str(source),
     )
+    # Preserve upstream lockfile bytes even with Windows global autocrlf enabled.
+    # https://github.com/Brevilabs/obsidian-copilot-private/issues/378
+    run("git", "config", "core.autocrlf", "false", cwd=source)
     run("git", "checkout", "--detach", pins["acpCommit"], cwd=source)
     if sha256(source / "package-lock.json") != pins["lockSha256"]:
         raise SystemExit("Upstream lockfile does not match pinned digest")
@@ -49,15 +73,31 @@ def build():
     ):
         raise SystemExit("Pinned ACP version does not match source")
     run("npm", "ci", "--ignore-scripts", cwd=source)
-    native = source / "node_modules/@openai/codex-darwin-arm64"
+    native = source / f"node_modules/@openai/codex-{target}"
     if (
         json.loads((native / "package.json").read_text())["version"]
-        != pins["codexVersion"] + "-darwin-arm64"
+        != pins["codexVersion"] + "-" + target
     ):
         raise SystemExit("Locked native Codex version does not match inputs")
-    run("npm", "test", cwd=source)
-    run("npm", "run", "typecheck", cwd=source)
-    name = f"codex-acp-v{pins['acpVersion']}-r{pins['packagingRevision']}-darwin-arm64"
+    # Native .exe launches must bypass cmd.exe so relocated paths with spaces work.
+    # https://github.com/Brevilabs/obsidian-copilot-private/issues/378
+    patches = {
+        "CodexCli.ts": ('shell: process.platform === "win32"', "shell: false"),
+        "CodexJsonRpcConnection.ts": (
+            """process.platform === 'win32'
+            ? spawn(`"${codexPath}" app-server`, { shell: true, env: spawnEnv })
+            : spawn(codexPath, ['app-server'], { env: spawnEnv })""",
+            "spawn(codexPath, ['app-server'], { env: spawnEnv })",
+        ),
+    }
+    for filename, (needle, replacement) in patches.items():
+        path = source / "src" / filename
+        text = path.read_text()
+        if text.count(needle) != 1:
+            raise SystemExit("Upstream native spawn patch needs review")
+        path.write_text(text.replace(needle, replacement))
+    check_upstream(source, target)
+    name = f"codex-acp-v{pins['acpVersion']}-r{pins['packagingRevision']}-{target}"
     package = work / name
     package.mkdir()
     shutil.copyfile(ROOT / "scripts/entry.ts", source / "portable-entry.ts")
@@ -68,12 +108,12 @@ def build():
         "--minify",
         "--sourcemap",
         "--compile",
-        "--target=bun-darwin-arm64",
+        "--target=" + bun_target(target),
         "--outfile",
-        str(package / "codex-acp"),
+        str(package / ("codex-acp" + extension)),
         cwd=source,
     )
-    shutil.copytree(native / "vendor/aarch64-apple-darwin", package / "codex-runtime")
+    shutil.copytree(native / ("vendor/" + triple), package / "codex-runtime")
     notices = package / "licenses"
     notices.mkdir()
     shutil.copyfile(ROOT / "LICENSE", notices / "packaging-LICENSE")
@@ -83,9 +123,9 @@ def build():
         if path.is_file() and path.name.lower().startswith(
             ("license", "notice", "copying")
         ):
-            target = notices / "npm" / path.relative_to(source / "node_modules")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(path, target)
+            notice = notices / "npm" / path.relative_to(source / "node_modules")
+            notice.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, notice)
     for project, revision, filename in [
         ("oven-sh/bun", "bun-v" + pins["bunRevision"].split("+")[0], "LICENSE.md"),
         ("openai/codex", pins["codexCommit"], "LICENSE"),
@@ -104,19 +144,23 @@ def build():
         "packagingDirty": bool(
             subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT)
         ),
-        "target": "darwin-arm64",
-        "macOSBuildVersion": platform.mac_ver()[0],
-        "releaseApproved": False,
+        "target": target,
+        "buildPlatform": platform.platform(),
+        "distributionApproval": "See release asset distribution-approval.json",
     }
     (package / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     # Test the exact package before making the local archive; no public publisher here.
-    run("python3", str(ROOT / "tests/smoke.py"), str(package))
+    run(sys.executable, str(ROOT / "tests/smoke.py"), str(package))
     dist = ROOT / "dist"
     dist.mkdir(exist_ok=True)
     archive = dist / (name + ".zip")
     archive.unlink(missing_ok=True)
-    run("zip", "-qr", str(archive), name, cwd=work)
-    run("unzip", "-tq", str(archive))
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zipped:
+        for path in package.rglob("*"):
+            zipped.write(path, path.relative_to(work))
+    with zipfile.ZipFile(archive) as zipped:
+        if zipped.testzip():
+            raise SystemExit("Archive integrity failed")
     manifest = {
         **provenance,
         "archive": archive.name,
