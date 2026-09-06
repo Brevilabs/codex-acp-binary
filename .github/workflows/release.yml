@@ -83,18 +83,12 @@ jobs:
           name: candidate-inputs
       - run: cp candidate-inputs.json inputs.json
       - run: python scripts/release.py verify
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: candidate-checksums
-          path: dist/SHA256SUMS
-          retention-days: 3
-  complete:
+  publish:
     needs: verify
     if: github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
-      statuses: write
       id-token: write
       attestations: write
     steps:
@@ -114,6 +108,6 @@ jobs:
       - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
           subject-path: dist/*
-      - run: python scripts/release.py record
+      - run: python scripts/release.py publish
         env:
           GH_TOKEN: ${{ github.token }}

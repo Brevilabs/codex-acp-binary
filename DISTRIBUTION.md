@@ -1,6 +1,8 @@
-# Distribution gates
+# Distribution limitations
 
-These archives are evaluation builds (local or short-lived CI artifacts). Do not publish them as user releases yet.
+Releases publish automatically after all six native builds and automated checks pass.
+This does not certify signing, minimum OS support, authenticated workflows, or a
+complete redistribution audit. The remaining work is described below.
 
 ## Licenses and source
 
@@ -9,11 +11,12 @@ and notices. The build copies available npm license/notice files and the upstrea
 Bun, Codex, and ACP notices into `licenses/`. This collection is not a compliance
 certification or a complete dependency audit.
 
-Before distribution, review the exact pinned Bun binary and its embedded components.
+The redistribution audit remains open: review the exact pinned Bun binary and its embedded components.
 Bun's MIT license does not replace JavaScriptCore/WebKit LGPL obligations. Prepare
 applicable corresponding source and rebuilding/relinking material, and audit native
 Codex helpers and bundled JavaScript dependencies. Record the completed audit and
-include its required material in each archive before enabling release publication.
+include its required material in each archive. Automatic publication is not evidence
+that this work is complete.
 See [Bun licensing](https://bun.com/docs/project/license) and the versions and commits
 in `provenance.json`. Source links alone do not establish compliance.
 
@@ -35,7 +38,7 @@ The native build matrix is below. These are CI environments, not verified minimu
 | win32-x64 | windows-2025 | x64 baseline |
 
 Linux ships Codex musl binaries but a glibc Bun adapter; it is not an Alpine/musl package.
-Windows packages are unsigned; test SmartScreen and decide signing before release.
+Windows packages are unsigned; SmartScreen behavior and signing remain unverified.
 CPU, libc and kernel floors must be verified for the complete package, including helpers.
 
  [Bun documents macOS 13 or newer](https://bun.com/docs/installation#cpu-requirements)
@@ -43,7 +46,7 @@ as its minimum, but the complete package's oldest supported version remains unve
 Do not advertise a supported floor until Codex and every helper pass there.
 
 Local builds have Bun's development/ad-hoc signing and are not Developer ID signed or
-notarized. A release owner must choose Developer ID signing plus notarization, verify
+notarized. Developer ID signing plus notarization remain unimplemented. Further work must verify
 all nested executables and entitlements, and test a browser-downloaded quarantined
 archive on a clean Mac. We do not instruct users to disable Gatekeeper.
 
