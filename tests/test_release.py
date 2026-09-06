@@ -66,102 +66,56 @@ class Release(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "six"):
             release.verify(self.dist, self.pins, "abc")
 
-    def test_approval_is_required_before_any_release_write(self):
-        """https://github.com/Brevilabs/obsidian-copilot-private/issues/378"""
-        with (
-            patch.object(release, "ROOT", self.root),
-            patch.object(sys, "argv", ["release.py", "publish"]),
-            patch.dict(os.environ, {"GITHUB_SHA": "abc"}, clear=True),
-            patch.object(release.subprocess, "run") as run,
-        ):
-            with self.assertRaisesRegex(ValueError, "not approved"):
-                release.main()
-            run.assert_not_called()
-
-    def test_failed_draft_upload_never_marks_release_complete(self):
-        """https://github.com/Brevilabs/obsidian-copilot-private/issues/378"""
-        environment = {
+    def publication_environment(self, event="schedule"):
+        return {
             "GITHUB_SHA": "abc",
-            "APPROVED_PACKAGING_SHA": "abc",
-            "APPROVED_INPUTS_SHA256": release.digest(self.root / "inputs.json"),
-            "APPROVED_ARTIFACTS_SHA256": release.digest(release.write_checksums(self.dist)),
-            "DISTRIBUTION_EVIDENCE_URL": "https://example.com/audit",
+            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_EVENT_NAME": event,
         }
-        with (
-            patch.object(release, "ROOT", self.root),
-            patch.object(sys, "argv", ["release.py", "publish"]),
-            patch.dict(os.environ, environment, clear=True),
-            patch.object(
-                release.subprocess, "run", side_effect=RuntimeError("upload failed")
-            ) as run,
-        ):
-            with self.assertRaises(RuntimeError):
-                release.main()
-            self.assertEqual(run.call_count, 1)
-            self.assertIn("--draft", run.call_args.args[0])
 
-    def test_each_approval_binding_is_required(self):
-        approved = {
-            "GITHUB_SHA": "abc",
-            "APPROVED_PACKAGING_SHA": "abc",
-            "APPROVED_INPUTS_SHA256": release.digest(self.root / "inputs.json"),
-            "APPROVED_ARTIFACTS_SHA256": release.digest(release.write_checksums(self.dist)),
-            "DISTRIBUTION_EVIDENCE_URL": "https://example.com/audit",
-        }
-        for key in approved.keys() - {"GITHUB_SHA"}:
-            for value in ("", "wrong"):
-                with (
-                    self.subTest(key=key, value=value),
-                    patch.object(release, "ROOT", self.root),
-                    patch.object(sys, "argv", ["release.py", "publish"]),
-                    patch.dict(os.environ, {**approved, key: value}, clear=True),
-                    patch.object(release.subprocess, "run") as run,
-                ):
-                    with self.assertRaisesRegex(ValueError, "not approved"):
-                        release.main()
-                    run.assert_not_called()
-
-    def test_changed_candidate_bytes_reject_previously_granted_approval(self):
-        environment = {
-            "GITHUB_SHA": "abc",
-            "APPROVED_PACKAGING_SHA": "abc",
-            "APPROVED_INPUTS_SHA256": release.digest(self.root / "inputs.json"),
-            "APPROVED_ARTIFACTS_SHA256": release.digest(release.write_checksums(self.dist)),
-            "DISTRIBUTION_EVIDENCE_URL": "https://example.com/audit",
-        }
-        # A rebuilt archive is internally valid but is not the vetted archive.
-        manifest_path = next(self.dist.glob("*.json"))
-        manifest = json.loads(manifest_path.read_text())
-        archive = self.dist / manifest["archive"]
-        archive.write_bytes(b"rebuilt archive with different timestamps")
-        manifest["sha256"] = release.digest(archive)
-        manifest_path.write_text(json.dumps(manifest))
-        self.assertEqual(len(release.verify(self.dist, self.pins, "abc")), 6)
-        with (
-            patch.object(release, "ROOT", self.root),
-            patch.object(sys, "argv", ["release.py", "publish"]),
-            patch.dict(os.environ, environment, clear=True),
-            patch.object(release.subprocess, "run") as run,
-        ):
-            with self.assertRaisesRegex(ValueError, "not approved"):
-                release.main()
-            run.assert_not_called()
-            self.assertFalse((self.dist / "distribution-approval.json").exists())
-
-    def test_only_successful_trusted_candidate_run_can_be_promoted(self):
-        candidate = {
-            "head_sha": "abc", "head_branch": "main", "event": "schedule",
-            "path": ".github/workflows/release.yml", "conclusion": "success",
-        }
-        release.validate_candidate_run(candidate, "abc")
-        release.validate_candidate_run({**candidate, "event": "workflow_dispatch"}, "abc")
+    def test_untrusted_publication_never_writes_release(self):
         for change in [
-            {"head_sha": "old"}, {"head_branch": "feature"},
-            {"event": "pull_request"}, {"path": ".github/workflows/other.yml"},
-            {"conclusion": "failure"}, {"conclusion": None},
+            {"GITHUB_REF": "refs/heads/feature"},
+            {"GITHUB_EVENT_NAME": "pull_request"},
+            {"GITHUB_EVENT_NAME": "push"},
         ]:
-            with self.subTest(change=change), self.assertRaises(ValueError):
-                release.validate_candidate_run({**candidate, **change}, "abc")
+            with (
+                self.subTest(change=change),
+                patch.object(release, "ROOT", self.root),
+                patch.object(sys, "argv", ["release.py", "publish"]),
+                patch.dict(os.environ, {**self.publication_environment(), **change}, clear=True),
+                patch.object(release.subprocess, "run") as run,
+            ):
+                with self.assertRaisesRegex(ValueError, "scheduled or manual"):
+                    release.main()
+                run.assert_not_called()
+
+    def test_invalid_artifacts_never_write_release(self):
+        next(self.dist.glob("*.zip")).write_bytes(b"tampered")
+        with (
+            patch.object(release, "ROOT", self.root),
+            patch.object(sys, "argv", ["release.py", "publish"]),
+            patch.dict(os.environ, self.publication_environment(), clear=True),
+            patch.object(release.subprocess, "run") as run,
+        ):
+            with self.assertRaisesRegex(ValueError, "checksum"):
+                release.main()
+            run.assert_not_called()
+
+    def test_failed_upload_or_publication_fails_without_overwriting_draft(self):
+        for results, calls in [(RuntimeError("upload failed"), 1),
+                               ([None, RuntimeError("publish failed")], 2)]:
+            with (
+                self.subTest(calls=calls),
+                patch.object(release, "ROOT", self.root),
+                patch.object(sys, "argv", ["release.py", "publish"]),
+                patch.dict(os.environ, self.publication_environment(), clear=True),
+                patch.object(release.subprocess, "run", side_effect=results) as run,
+            ):
+                with self.assertRaises(RuntimeError):
+                    release.main()
+                self.assertEqual(run.call_count, calls)
+                self.assertIn("--draft", run.call_args_list[0].args[0])
 
     def test_existing_release_including_draft_skips_build(self):
         """https://github.com/Brevilabs/obsidian-copilot-private/issues/378"""
@@ -222,83 +176,42 @@ class Release(unittest.TestCase):
         ):
             release.discover(self.pins, "owner/repo")
 
-    def test_scheduled_success_skips_but_manual_retry_builds(self):
-        """https://github.com/Brevilabs/obsidian-copilot-private/issues/378"""
+    def test_scheduled_and_manual_runs_retry_unpublished_candidates(self):
         stable = {"tag_name": "v1.10.0", "draft": False, "prerelease": False}
         lock = b'{"packages":{"node_modules/@openai/codex":{"version":"0.153.3"}}}'
-        candidate = {
-            **self.pins,
-            "acpCommit": "adapter",
-            "codexCommit": "engine",
-            "codexVersion": "0.153.3",
-            "lockSha256": hashlib.sha256(lock).hexdigest(),
-        }
-        for event, skipped in [("schedule", True), ("workflow_dispatch", False)]:
+        for event in ["schedule", "workflow_dispatch"]:
             with (
-                patch.dict(
-                    os.environ, {"GITHUB_EVENT_NAME": event, "GITHUB_SHA": "abc"}
-                ),
-                patch.object(
-                    release,
-                    "api",
-                    side_effect=[stable, {"sha": "adapter"}, {"sha": "engine"}],
-                ),
-                patch.object(
-                    release.subprocess,
-                    "check_output",
-                    side_effect=[
-                        "[[]]",
-                        json.dumps(
-                            [
-                                [
-                                    {
-                                        "context": release.context(candidate),
-                                        "state": "success",
-                                    }
-                                ]
-                            ]
-                        ),
-                    ],
-                ),
-                patch.object(
-                    release.urllib.request, "urlopen", return_value=io.BytesIO(lock)
-                ),
+                self.subTest(event=event),
+                patch.dict(os.environ, self.publication_environment(event), clear=True),
+                patch.object(release, "api", side_effect=[stable, {"sha": "adapter"}, {"sha": "engine"}]),
+                patch.object(release.subprocess, "check_output", side_effect=["[[]]"]) as request,
+                patch.object(release.urllib.request, "urlopen", return_value=io.BytesIO(lock)),
             ):
-                self.assertEqual(
-                    release.discover(self.pins, "owner/repo") is None, skipped
-                )
+                self.assertIsNotNone(release.discover(self.pins, "owner/repo"))
+                # No commit-status lookup: a passed build is not a published release.
+                self.assertEqual(request.call_count, 1)
 
-    def test_approved_complete_set_uploads_draft_before_publishing(self):
-        """https://github.com/Brevilabs/obsidian-copilot-private/issues/378"""
-        environment = {
-            "GITHUB_SHA": "abc",
-            "APPROVED_PACKAGING_SHA": "abc",
-            "APPROVED_INPUTS_SHA256": release.digest(self.root / "inputs.json"),
-            "APPROVED_ARTIFACTS_SHA256": release.digest(release.write_checksums(self.dist)),
-            "DISTRIBUTION_EVIDENCE_URL": "https://example.com/audit",
-        }
-        with (
-            patch.object(release, "ROOT", self.root),
-            patch.object(sys, "argv", ["release.py", "publish"]),
-            patch.dict(os.environ, environment, clear=True),
-            patch.object(release.subprocess, "run") as run,
-        ):
-            original = {p.name: p.read_bytes() for p in self.dist.iterdir()}
-            release.main()
-            approval = json.loads((self.dist / "distribution-approval.json").read_text())
-            self.assertTrue(approval["releaseApproved"])
-            self.assertEqual(approval["candidateChecksumsSha256"], environment["APPROVED_ARTIFACTS_SHA256"])
-            self.assertEqual(approval["evidenceUrl"], environment["DISTRIBUTION_EVIDENCE_URL"])
-            for name, content in original.items():
-                if name != "SHA256SUMS":
+    def test_complete_set_automatically_uploads_draft_before_publishing(self):
+        for event in ["schedule", "workflow_dispatch"]:
+            with (
+                self.subTest(event=event),
+                patch.object(release, "ROOT", self.root),
+                patch.object(sys, "argv", ["release.py", "publish"]),
+                patch.dict(os.environ, self.publication_environment(event), clear=True),
+                patch.object(release.subprocess, "run") as run,
+            ):
+                original = {p.name: p.read_bytes() for p in self.dist.iterdir()}
+                release.main()
+                for name, content in original.items():
                     self.assertEqual((self.dist / name).read_bytes(), content)
-                    self.assertEqual(approval["artifacts"][name], hashlib.sha256(content).hexdigest())
-            self.assertEqual(run.call_count, 2)
-            self.assertIn("--draft", run.call_args_list[0].args[0])
-            self.assertIn("--draft=false", run.call_args_list[1].args[0])
-            self.assertEqual(
-                len((self.dist / "SHA256SUMS").read_text().splitlines()), 13
-            )
+                self.assertFalse((self.dist / "distribution-approval.json").exists())
+                self.assertEqual(run.call_count, 2)
+                create = run.call_args_list[0].args[0]
+                self.assertIn("--draft", create)
+                self.assertIn("--draft=false", run.call_args_list[1].args[0])
+                for path in self.dist.iterdir():
+                    self.assertIn(str(path), create)
+                self.assertEqual(len((self.dist / "SHA256SUMS").read_text().splitlines()), 12)
 
     def test_pull_request_uses_reviewed_pins_without_release_discovery(self):
         output = self.root / "output"
@@ -319,20 +232,24 @@ class Release(unittest.TestCase):
             )
             self.assertIn("build=true", output.read_text())
 
-    def test_candidate_completion_marker_requires_verified_artifacts(self):
-        for mode in ["verify", "record"]:
-            with (
-                patch.object(release, "ROOT", self.root),
-                patch.object(sys, "argv", ["release.py", mode]),
-                patch.dict(
-                    os.environ,
-                    {"GITHUB_SHA": "abc", "GITHUB_REPOSITORY": "owner/repo"},
-                    clear=True,
-                ),
-                patch.object(release.subprocess, "run") as run,
-            ):
+    def test_verify_does_not_publish(self):
+        with (
+            patch.object(release, "ROOT", self.root),
+            patch.object(sys, "argv", ["release.py", "verify"]),
+            patch.dict(os.environ, {"GITHUB_SHA": "abc"}, clear=True),
+            patch.object(release.subprocess, "run") as run,
+        ):
+            release.main()
+            run.assert_not_called()
+
+    def test_unknown_mode_cannot_publish(self):
+        with (
+            patch.object(sys, "argv", ["release.py", "record"]),
+            patch.object(release.subprocess, "run") as run,
+        ):
+            with self.assertRaisesRegex(ValueError, "Expected"):
                 release.main()
-                self.assertEqual(run.call_count, int(mode == "record"))
+            run.assert_not_called()
 
 
 class Targets(unittest.TestCase):
