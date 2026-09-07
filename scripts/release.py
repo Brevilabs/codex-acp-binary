@@ -23,10 +23,20 @@ def digest(path):
 
 
 def tag(pins):
-    return f"v{pins['acpVersion']}-r{pins['packagingRevision']}"
+    return f"v{pins['acpVersion']}"
 
 
-def discover(pins, repository, requested=""):
+def existing_release(repository, version):
+    pages = json.loads(
+        subprocess.check_output(
+            ["gh", "api", "--paginate", "--slurp", f"repos/{repository}/releases"],
+            text=True,
+        )
+    )
+    return next((r for page in pages for r in page if r["tag_name"] == version), None)
+
+
+def discover(pins, repository, requested="", replace=False):
     upstream = "agentclientprotocol/codex-acp"
     release = api(
         f"repos/{upstream}/releases/" + (f"tags/{requested}" if requested else "latest")
@@ -39,15 +49,8 @@ def discover(pins, repository, requested=""):
     ):
         raise ValueError("Only stable semver releases are supported")
     candidate = {**pins, "acpVersion": version[1:]}
-    # Do not edit assets of an existing release, including an interrupted draft.
-    # https://github.com/Brevilabs/obsidian-copilot-private/issues/378
-    existing = json.loads(
-        subprocess.check_output(
-            ["gh", "api", "--paginate", "--slurp", f"repos/{repository}/releases"],
-            text=True,
-        )
-    )
-    if any(r["tag_name"] == tag(candidate) for page in existing for r in page):
+    existing = existing_release(repository, tag(candidate))
+    if existing and not existing["draft"] and not replace:
         return None
     candidate["acpCommit"] = api(f"repos/{upstream}/commits/{version}")["sha"]
     lock = urllib.request.urlopen(
@@ -117,6 +120,7 @@ def main():
                 pins,
                 os.environ["GITHUB_REPOSITORY"],
                 os.environ.get("UPSTREAM_TAG", ""),
+                replace=os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch",
             )
         if pins:
             (ROOT / "candidate-inputs.json").write_text(
@@ -146,7 +150,16 @@ def main():
         write_checksums(dist)
         if mode == "verify":
             return
-        # A failed upload remains a draft: bump packagingRevision for retry, never overwrite it.
+        existing = existing_release(os.environ["GITHUB_REPOSITORY"], tag(pins))
+        if existing:
+            if not existing["draft"] and os.environ["GITHUB_EVENT_NAME"] != "workflow_dispatch":
+                return
+            # Replace only after the complete new set passes verification. Recreate
+            # the tag too, so it points at the commit that built these packages.
+            subprocess.run(
+                ["gh", "release", "delete", tag(pins), "--yes", "--cleanup-tag"],
+                check=True,
+            )
         subprocess.run(
             [
                 "gh",

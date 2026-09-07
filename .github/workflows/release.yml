@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       upstream_tag:
-        description: Stable upstream tag (empty selects latest)
+        description: Stable upstream tag to rebuild and replace (empty selects latest)
         type: string
 permissions:
   contents: read

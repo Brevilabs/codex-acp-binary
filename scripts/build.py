@@ -97,7 +97,7 @@ def build():
             raise SystemExit("Upstream native spawn patch needs review")
         path.write_text(text.replace(needle, replacement))
     check_upstream(source, target)
-    name = f"codex-acp-v{pins['acpVersion']}-r{pins['packagingRevision']}-{target}"
+    name = f"codex-acp-v{pins['acpVersion']}-{target}"
     package = work / name
     package.mkdir()
     shutil.copyfile(ROOT / "scripts/entry.ts", source / "portable-entry.ts")

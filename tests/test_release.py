@@ -21,12 +21,12 @@ class Release(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self.temp.name)
-        self.pins = {"acpVersion": "1.10.0", "packagingRevision": 1}
+        self.pins = {"acpVersion": "1.10.0"}
         (self.root / "inputs.json").write_text(json.dumps(self.pins))
         self.dist = self.root / "dist"
         self.dist.mkdir()
         for target in TARGETS:
-            name = f"codex-acp-v1.10.0-r1-{target}.zip"
+            name = f"codex-acp-v1.10.0-{target}.zip"
             archive = self.dist / name
             archive.write_bytes(b"archive")
             (self.dist / (name[:-4] + ".json")).write_text(
@@ -68,6 +68,7 @@ class Release(unittest.TestCase):
 
     def publication_environment(self, event="schedule"):
         return {
+            "GITHUB_REPOSITORY": "owner/repo",
             "GITHUB_SHA": "abc",
             "GITHUB_REF": "refs/heads/main",
             "GITHUB_EVENT_NAME": event,
@@ -102,7 +103,8 @@ class Release(unittest.TestCase):
                 release.main()
             run.assert_not_called()
 
-    def test_failed_upload_or_publication_fails_without_overwriting_draft(self):
+    @patch.object(release, "existing_release", return_value=None)
+    def test_failed_upload_or_publication_leaves_retryable_draft(self, existing):
         for results, calls in [(RuntimeError("upload failed"), 1),
                                ([None, RuntimeError("publish failed")], 2)]:
             with (
@@ -117,7 +119,7 @@ class Release(unittest.TestCase):
                 self.assertEqual(run.call_count, calls)
                 self.assertIn("--draft", run.call_args_list[0].args[0])
 
-    def test_existing_release_including_draft_skips_build(self):
+    def test_published_release_skips_scheduled_build(self):
         """https://github.com/Brevilabs/obsidian-copilot-private/issues/378"""
         stable = {"tag_name": "v1.10.0", "draft": False, "prerelease": False}
         with (
@@ -125,12 +127,84 @@ class Release(unittest.TestCase):
             patch.object(
                 release.subprocess,
                 "check_output",
-                return_value='[[{"tag_name":"v1.10.0-r1","draft":true}]]',
+                return_value='[[{"tag_name":"v1.10.0","draft":false}]]',
             ),
             patch.object(release.urllib.request, "urlopen") as fetch,
         ):
             self.assertIsNone(release.discover(self.pins, "owner/repo"))
             fetch.assert_not_called()
+
+    def test_manual_rebuild_and_draft_retry_resolve_existing_version(self):
+        stable = {"tag_name": "v1.10.0", "draft": False, "prerelease": False}
+        lock = b'{"packages":{"node_modules/@openai/codex":{"version":"0.153.3"}}}'
+        for draft, replace in [(False, True), (True, False), (True, True)]:
+            with (
+                self.subTest(draft=draft, replace=replace),
+                patch.object(release, "api", side_effect=[stable, {"sha": "adapter"}, {"sha": "engine"}]),
+                patch.object(release, "existing_release", return_value={"draft": draft}),
+                patch.object(release.urllib.request, "urlopen", return_value=io.BytesIO(lock)),
+            ):
+                candidate = release.discover(self.pins, "owner/repo", replace=replace)
+                self.assertEqual(release.tag(candidate), "v1.10.0")
+
+    def test_replacement_recreates_release_and_tag_after_verification(self):
+        for event, draft in [("workflow_dispatch", False), ("schedule", True)]:
+            with (
+                self.subTest(event=event, draft=draft),
+                patch.object(release, "ROOT", self.root),
+                patch.object(sys, "argv", ["release.py", "publish"]),
+                patch.dict(os.environ, self.publication_environment(event), clear=True),
+                patch.object(release, "existing_release", return_value={"draft": draft}),
+                patch.object(release.subprocess, "run") as run,
+            ):
+                release.main()
+                commands = [call.args[0] for call in run.call_args_list]
+                self.assertEqual(commands[0], ["gh", "release", "delete", "v1.10.0", "--yes", "--cleanup-tag"])
+                self.assertEqual(commands[1][:4], ["gh", "release", "create", "v1.10.0"])
+                self.assertIn("--draft", commands[1])
+                self.assertEqual(commands[1][commands[1].index("--target") + 1], "abc")
+                self.assertEqual(commands[2], ["gh", "release", "edit", "v1.10.0", "--draft=false"])
+
+    def test_scheduled_publication_preserves_existing_published_release(self):
+        with (
+            patch.object(release, "ROOT", self.root),
+            patch.object(sys, "argv", ["release.py", "publish"]),
+            patch.dict(os.environ, self.publication_environment(), clear=True),
+            patch.object(release, "existing_release", return_value={"draft": False}),
+            patch.object(release.subprocess, "run") as run,
+        ):
+            release.main()
+            run.assert_not_called()
+
+    def test_failed_replacement_delete_stops_publication(self):
+        with (
+            patch.object(release, "ROOT", self.root),
+            patch.object(sys, "argv", ["release.py", "publish"]),
+            patch.dict(os.environ, self.publication_environment("workflow_dispatch"), clear=True),
+            patch.object(release, "existing_release", return_value={"draft": False}),
+            patch.object(release.subprocess, "run", side_effect=RuntimeError("delete failed")) as run,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "delete failed"):
+                release.main()
+            self.assertEqual(run.call_count, 1)
+
+    def test_manual_discovery_enables_replacement(self):
+        for event in ["schedule", "workflow_dispatch"]:
+            with (
+                self.subTest(event=event),
+                patch.object(release, "ROOT", self.root),
+                patch.object(sys, "argv", ["release.py", "discover"]),
+                patch.dict(os.environ, {
+                    **self.publication_environment(event),
+                    "GITHUB_OUTPUT": str(self.root / "output"),
+                    "UPSTREAM_TAG": "v1.10.0",
+                }, clear=True),
+                patch.object(release, "discover", return_value=self.pins) as discover,
+            ):
+                release.main()
+                discover.assert_called_once_with(
+                    self.pins, "owner/repo", "v1.10.0", replace=event == "workflow_dispatch"
+                )
 
     def test_unseen_stable_resolves_source_lock_and_native_codex(self):
         """https://github.com/Brevilabs/obsidian-copilot-private/issues/378"""
@@ -152,7 +226,6 @@ class Release(unittest.TestCase):
             pins,
             {
                 "acpVersion": "1.11.0",
-                "packagingRevision": 1,
                 "acpCommit": "adapter",
                 "codexCommit": "engine",
                 "codexVersion": "0.154.0",
@@ -191,7 +264,8 @@ class Release(unittest.TestCase):
                 # No commit-status lookup: a passed build is not a published release.
                 self.assertEqual(request.call_count, 1)
 
-    def test_complete_set_automatically_uploads_draft_before_publishing(self):
+    @patch.object(release, "existing_release", return_value=None)
+    def test_complete_set_automatically_uploads_draft_before_publishing(self, existing):
         for event in ["schedule", "workflow_dispatch"]:
             with (
                 self.subTest(event=event),
