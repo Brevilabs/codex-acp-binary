@@ -39,20 +39,23 @@ publication does not certify those checks.
 
 PRs build the reviewed `inputs.json` on all six native standard GitHub runners.
 Nightly and manual runs resolve the latest stable upstream tag to an exact commit,
-lockfile digest and locked Codex version/commit. Bun and packaging revision stay pinned.
+lockfile digest and locked Codex version/commit. Bun stays pinned.
 Candidate pins are saved with each archive. Upstream tests use POSIX path snapshots
 and a Windows `.cmd` fixture incompatible with our direct native launch; Windows
 validation uses typechecking and the real packaged executable smoke tests instead.
 All six targets must pass those package tests. Source layout changes stop the build for
 review rather than silently dropping our native Windows launch patch.
 
-Nightly runs check at 07:23 UTC and skip versions that already have a release,
-including drafts. Manual dispatch can select an older stable tag. All release runs
+Nightly runs check at 07:23 UTC and skip versions that already have a published
+release. Manual dispatch rebuilds and replaces the selected stable tag, or the latest
+stable version when no tag is supplied. All release runs
 share a concurrency group; a failed target prevents publication. Intermediate
 artifacts expire after three days. Builds that fail before creating a release are
 retried on the next nightly run; previous build-success statuses do not suppress them.
-An interrupted release upload or publication remains a draft and is never overwritten:
-increment `packagingRevision` to retry that upstream version.
+Interrupted drafts are retried on the next run. After all new packages pass
+verification, replacement deletes the existing release and tag, then recreates them
+with the new build commit and assets. Downloads are briefly unavailable during
+replacement; if publication fails, rerun the workflow to retry.
 
 On `main`, scheduled and manual **Native packages** runs automatically publish the
 verified packages after creating GitHub build attestations. No approval variables or
@@ -61,7 +64,7 @@ publish. Merging does not trigger a build immediately: wait for the next nightly
 or dispatch **Native packages** on `main`.
 
 Each release contains six ZIPs, matching JSON manifests and `SHA256SUMS`. Each ZIP
-holds one `codex-acp-v<VERSION>-r<REVISION>-<TARGET>/` directory; Windows uses
+holds one `codex-acp-v<VERSION>-<TARGET>/` directory; Windows uses
 `codex-acp.exe`. The manifest records compressed/extracted sizes and all input pins.
 GitHub build attestations cover archives and manifests; after downloading, run
 `sha256sum -c SHA256SUMS` and
