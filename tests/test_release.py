@@ -26,10 +26,11 @@ class Release(unittest.TestCase):
         self.dist = self.root / "dist"
         self.dist.mkdir()
         for target in TARGETS:
-            name = f"codex-acp-v1.10.0-{target}.zip"
+            stem = f"codex-acp-v1.10.0-{target}"
+            name = stem + (".tar.gz" if target.startswith("linux-") else ".zip")
             archive = self.dist / name
             archive.write_bytes(b"archive")
-            (self.dist / (name[:-4] + ".json")).write_text(
+            (self.dist / (stem + ".json")).write_text(
                 json.dumps(
                     {
                         **self.pins,
@@ -46,6 +47,30 @@ class Release(unittest.TestCase):
 
     def test_complete_matching_artifacts_pass(self):
         self.assertEqual(len(release.verify(self.dist, self.pins, "abc")), 6)
+
+    def test_linux_zip_and_extra_archives_block_publication(self):
+        for name in ["codex-acp-v1.10.0-linux-x64.zip", "unexpected.tar.gz"]:
+            with self.subTest(name=name):
+                extra = self.dist / name
+                extra.write_bytes(b"archive")
+                with self.assertRaisesRegex(ValueError, "Unexpected archives"):
+                    release.verify(self.dist, self.pins, "abc")
+                extra.unlink()
+        manifest = self.dist / "codex-acp-v1.10.0-linux-x64.json"
+        data = json.loads(manifest.read_text())
+        data["archive"] = "codex-acp-v1.10.0-linux-x64.zip"
+        manifest.write_text(json.dumps(data))
+        with self.assertRaisesRegex(ValueError, "target/archive"):
+            release.verify(self.dist, self.pins, "abc")
+
+    def test_checksums_cover_both_archive_formats_and_manifests(self):
+        checksums = release.write_checksums(self.dist)
+        expected = {p.name for p in self.dist.iterdir() if p != checksums}
+        lines = checksums.read_text().splitlines()
+        self.assertEqual({line.split("  ")[1] for line in lines}, expected)
+        for line in lines:
+            digest, name = line.split("  ")
+            self.assertEqual(digest, release.digest(self.dist / name))
 
     def test_failed_target_mixed_inputs_and_tampering_block_publication(self):
         """https://github.com/Brevilabs/obsidian-copilot-private/issues/378"""

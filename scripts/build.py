@@ -7,10 +7,11 @@ import platform
 import shutil
 import subprocess
 import sys
+import tarfile
 import urllib.request
 import zipfile
 
-from targets import bun_target, native_target
+from targets import archive_suffix, bun_target, native_target
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -30,6 +31,22 @@ def check_upstream(source, target):
     if not target.startswith("win32-"):
         run("npm", "test", cwd=source)
     run("npm", "run", "typecheck", cwd=source)
+
+
+def create_archive(package, dist, target):
+    archive = dist / (package.name + archive_suffix(target))
+    archive.unlink(missing_ok=True)
+    if target.startswith("linux-"):
+        with tarfile.open(archive, "w:gz") as packed:
+            packed.add(package, arcname=package.name)
+    else:
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zipped:
+            for path in package.rglob("*"):
+                zipped.write(path, path.relative_to(package.parent))
+        with zipfile.ZipFile(archive) as zipped:
+            if zipped.testzip():
+                raise SystemExit("Archive integrity failed")
+    return archive
 
 
 def build():
@@ -152,14 +169,7 @@ def build():
     run(sys.executable, str(ROOT / "tests/smoke.py"), str(package))
     dist = ROOT / "dist"
     dist.mkdir(exist_ok=True)
-    archive = dist / (name + ".zip")
-    archive.unlink(missing_ok=True)
-    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zipped:
-        for path in package.rglob("*"):
-            zipped.write(path, path.relative_to(work))
-    with zipfile.ZipFile(archive) as zipped:
-        if zipped.testzip():
-            raise SystemExit("Archive integrity failed")
+    archive = create_archive(package, dist, target)
     manifest = {
         **provenance,
         "archive": archive.name,

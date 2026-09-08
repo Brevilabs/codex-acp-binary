@@ -6,6 +6,8 @@ import os
 import pathlib
 import subprocess
 import sys
+import shutil
+import zipfile
 import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
@@ -140,3 +142,53 @@ class BuildInputs(unittest.TestCase):
                 self.assertEqual(
                     ("npm", "test") in commands, not target.startswith("win32-")
                 )
+
+
+class Archives(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt" or not shutil.which("tar"), "requires POSIX tar")
+    def test_linux_archives_extract_with_system_tar_and_preserve_executables(self):
+        for target in ("linux-arm64", "linux-x64"):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                package = root / f"codex-acp-v1.10.0-{target}"
+                package.mkdir()
+                files = {
+                    "codex-acp": b"#!/bin/sh\nprintf 'adapter'\n",
+                    "codex-runtime/codex/codex": b"#!/bin/sh\nprintf 'engine'\n",
+                    "codex-runtime/path/rg": b"#!/bin/sh\nprintf 'helper'\n",
+                    "licenses/LICENSE": b"license notice",
+                    "provenance.json": b'{"target":"linux"}',
+                }
+                for name, content in files.items():
+                    path = package / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(content)
+                    path.chmod(0o755 if content.startswith(b"#!") else 0o644)
+                (package / "codex-link").symlink_to("codex-runtime/codex/codex")
+                archive = build.create_archive(package, root, target)
+                self.assertEqual(archive.name, package.name + ".tar.gz")
+                extracted = root / "extract with spaces"
+                extracted.mkdir()
+                subprocess.run(["tar", "-xzf", str(archive), "-C", str(extracted)], check=True)
+                self.assertEqual([p.name for p in extracted.iterdir()], [package.name])
+                for name, content in files.items():
+                    path = extracted / package.name / name
+                    self.assertEqual(path.read_bytes(), content)
+                    self.assertEqual(path.stat().st_mode & 0o777, (package / name).stat().st_mode & 0o777)
+                    if content.startswith(b"#!"):
+                        self.assertTrue(subprocess.check_output([str(path)]))
+                self.assertEqual(os.readlink(extracted / package.name / "codex-link"), "codex-runtime/codex/codex")
+
+    def test_macos_and_windows_keep_zip_layout(self):
+        for target in ("darwin-arm64", "darwin-x64", "win32-arm64", "win32-x64"):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                package = root / f"codex-acp-v1.10.0-{target}"
+                package.mkdir()
+                binary = "codex-acp.exe" if target.startswith("win32-") else "codex-acp"
+                (package / binary).write_bytes(b"adapter")
+                archive = build.create_archive(package, root, target)
+                self.assertEqual(archive.name, package.name + ".zip")
+                with zipfile.ZipFile(archive) as zipped:
+                    self.assertEqual(zipped.namelist(), [f"{package.name}/{binary}"])
+                    self.assertEqual(zipped.read(f"{package.name}/{binary}"), b"adapter")
