@@ -38,3 +38,7 @@ def bun_target(target):
         + target.replace("win32", "windows")
         + ("-baseline" if target.endswith("x64") else "")
     )
+
+
+def archive_suffix(target):
+    return ".tar.gz" if target.startswith("linux-") else ".zip"

@@ -21,7 +21,7 @@ The command fetches the pinned ACP commit, verifies its lockfile digest, install
 dependencies, typechecks upstream on every OS, runs its full suite on POSIX hosts,
 compiles the adapter, and copies the full
 native Codex distribution. Clean-environment tests relocate the package into a path
-with spaces before the ZIP is produced. To rebuild, remove the generated `build/`
+with spaces before the archive is produced. To rebuild, remove the generated `build/`
 directory first. `dist/` contains the archive and JSON with exact inputs, SHA-256 and
 compressed/extracted sizes. Binary outputs are not tracked. Input pinning provides a
 repeatable recipe; byte-identical reproducibility is not asserted.
@@ -63,9 +63,20 @@ separate publish dispatch are required. PR runs only build and verify; they cann
 publish. Merging does not trigger a build immediately: wait for the next nightly run
 or dispatch **Native packages** on `main`.
 
-Each release contains six ZIPs, matching JSON manifests and `SHA256SUMS`. Each ZIP
-holds one `codex-acp-v<VERSION>-<TARGET>/` directory; Windows uses
+Each release contains two Linux `.tar.gz` archives, four macOS/Windows ZIPs,
+matching JSON manifests and `SHA256SUMS`. Each archive holds one
+`codex-acp-v<VERSION>-<TARGET>/` directory; Windows uses
 `codex-acp.exe`. The manifest records compressed/extracted sizes and all input pins.
 GitHub build attestations cover archives and manifests; after downloading, run
 `sha256sum -c SHA256SUMS` and
-`gh attestation verify <archive.zip> --repo Brevilabs/codex-acp-binary`.
+`gh attestation verify <archive> --repo Brevilabs/codex-acp-binary`.
+
+On Linux, extract with the system tar command, which preserves executable permissions:
+
+```sh
+tar -xzf "codex-acp-v<VERSION>-linux-<ARCH>.tar.gz"
+```
+
+Replace `<VERSION>` with the release version and `<ARCH>` with `x64` or `arm64`.
+Clients can invoke system `tar` without a JavaScript ZIP library. Clients that
+construct Linux asset URLs must use `.tar.gz` instead of `.zip`.

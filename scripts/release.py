@@ -9,7 +9,7 @@ import subprocess
 import sys
 import urllib.request
 
-from targets import TARGETS, bun_target
+from targets import TARGETS, archive_suffix, bun_target
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -74,7 +74,7 @@ def verify(dist, pins, commit):
     for path in manifests:
         manifest = json.loads(path.read_text())
         target = manifest["target"]
-        expected = f"codex-acp-{tag(pins)}-{target}.zip"
+        expected = f"codex-acp-{tag(pins)}-{target}{archive_suffix(target)}"
         if target not in TARGETS or target in seen or manifest["archive"] != expected:
             raise ValueError("Unexpected or duplicate target/archive")
         seen.add(target)
@@ -85,11 +85,12 @@ def verify(dist, pins, commit):
             raise ValueError("Mixed build inputs")
         if digest(dist / expected) != manifest["sha256"]:
             raise ValueError("Archive checksum mismatch")
-    if {p.name for p in dist.glob("*.zip")} != {
-        f"codex-acp-{tag(pins)}-{t}.zip" for t in TARGETS
+    archives = [p for p in dist.iterdir() if p.name.endswith((".zip", ".tar.gz"))]
+    if {p.name for p in archives} != {
+        f"codex-acp-{tag(pins)}-{t}{archive_suffix(t)}" for t in TARGETS
     }:
         raise ValueError("Unexpected archives")
-    return sorted(dist.glob("*.zip"))
+    return sorted(archives)
 
 
 def write_checksums(dist):
@@ -98,7 +99,7 @@ def write_checksums(dist):
         "".join(
             f"{digest(p)}  {p.name}\n"
             for p in sorted(dist.iterdir())
-            if p.suffix in (".zip", ".json")
+            if p.name.endswith((".zip", ".tar.gz", ".json"))
         )
     )
     return path
