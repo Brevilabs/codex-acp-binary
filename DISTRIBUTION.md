@@ -21,7 +21,8 @@ See [Bun licensing](https://bun.com/docs/project/license) and the versions and c
 in `provenance.json`. Source links alone do not establish compliance.
 
 Our modifications are the adapter entrypoint, which selects the adjacent bundled native
-Codex executable, and direct native process spawning in both upstream launch sites. It preserves `CODEX_HOME` and never copies credentials. This is an
+Codex executable, and the source patches listed in [`patches/README.md`](patches/README.md).
+The entrypoint preserves `CODEX_HOME` and never copies credentials. This is an
 independent Brevilabs package, not an official OpenAI release.
 
 ## Platform support and signing

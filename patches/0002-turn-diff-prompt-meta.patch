@@ -1,0 +1,335 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Zero Liu <zerolxy@gmail.com>
+Date: Fri, 9 Oct 2026 16:43:39 -0700
+Subject: [PATCH 2/2] feat: return the Codex turn diff on the prompt response
+
+Clients that opt in with clientCapabilities._meta.codex.turnDiff get the
+final turn/diff/updated payload of a completed turn in the session/prompt
+response _meta.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ docs/turn-diff.md                             |  44 ++++++
+ src/CodexAcpServer.ts                         |  38 ++++-
+ src/TurnDiffMeta.ts                           |  31 ++++
+ .../CodexACPAgent/turn-diff-meta.test.ts      | 135 ++++++++++++++++++
+ 4 files changed, 245 insertions(+), 3 deletions(-)
+ create mode 100644 docs/turn-diff.md
+ create mode 100644 src/TurnDiffMeta.ts
+ create mode 100644 src/__tests__/CodexACPAgent/turn-diff-meta.test.ts
+
+diff --git a/docs/turn-diff.md b/docs/turn-diff.md
+new file mode 100644
+index 0000000..7554545
+--- /dev/null
++++ b/docs/turn-diff.md
+@@ -0,0 +1,44 @@
++# Turn diff
++
++Codex tracks the net change of every file that `apply_patch` touches during a turn. It takes each file's baseline from the content the patch replaced, at the moment the patch applies, and sends the aggregate as `turn/diff/updated`. A client can receive that diff with the turn's prompt response. Clients opt in during initialization:
++
++```json
++{
++  "clientCapabilities": {
++    "_meta": {
++      "codex": {
++        "turnDiff": true
++      }
++    }
++  }
++}
++```
++
++When a turn completes, the `session/prompt` response carries the last diff Codex reported for that turn next to the existing `quota` key:
++
++```json
++{
++  "stopReason": "end_turn",
++  "_meta": {
++    "quota": { "...": "..." },
++    "codex": {
++      "turnDiff": {
++        "status": "reported",
++        "turnId": "019a...",
++        "root": "/Users/me/vault",
++        "diff": "diff --git a/notes/a.md b/notes/a.md\n--- a/notes/a.md\n+++ b/notes/a.md\n@@ -1 +1 @@\n-old\n+new\n"
++      }
++    }
++  }
++}
++```
++
++`diff` is Codex's unified Git diff, unchanged. It is an empty string when the turn changed no files. Its paths are relative to `root`: the nearest ancestor of the working directory that contains `.git`, or the working directory itself when there is none. The adapter resolves `root` before the turn starts, as Codex does.
++
++A diff larger than 8 MiB is not sent. The response then carries `{ "status": "unavailable", "turnId": "...", "reason": "tooLarge" }`.
++
++Only a completed turn carries the key. A cancelled prompt, a failed turn, and a local command that starts no turn do not.
++
++The diff has the same coverage as Codex's tracker. It omits changes made outside `apply_patch`, including shell commands, version-control commands, generators, and child processes.
++
++A client that does not opt in gets the same prompt response as before. AIR clients can keep using the [agent file-change report](air-extensions.md#agent-file-change-report), which sends the changed paths without the diff text.
+diff --git a/src/CodexAcpServer.ts b/src/CodexAcpServer.ts
+index d3f90a8..a2b3db3 100644
+--- a/src/CodexAcpServer.ts
++++ b/src/CodexAcpServer.ts
+@@ -189,6 +189,7 @@ import {
+     createUnavailableAgentFileChangeReport,
+     parseAgentFileChangeReportRequest,
+ } from "./AgentFileChangeReport";
++import {clientSupportsTurnDiff, createTurnDiffMeta} from "./TurnDiffMeta";
+ 
+ 
+ export interface SessionState extends SessionIndexTitleState {
+@@ -3267,6 +3268,10 @@ export class CodexAcpServer {
+         const agentFileChangeWorkspace = agentFileChangeReportRequest === null
+             ? null
+             : captureAgentFileChangeWorkspace(sessionState.cwd, sessionState.additionalDirectories);
++        // Codex renders turn-diff paths against the root it resolves before the turn starts.
++        const turnDiffRoot = clientSupportsTurnDiff(this.clientCapabilities)
++            ? captureAgentFileChangeWorkspace(sessionState.cwd, sessionState.additionalDirectories).diffRoot
++            : null;
+         let agentFileChangeReportTurnId: string | null = null;
+         let agentFileChangeReportUnavailableReason: AgentFileChangeReportUnavailableReason = "providerError";
+         let promptWasCancelled = false;
+@@ -3348,7 +3353,7 @@ export class CodexAcpServer {
+                 this.sessionFailureEpoch,
+                 sessionState.subagents,
+                 (accountUpdated) => this.handleAccountUpdated(accountUpdated),
+-                agentFileChangeReportRequest !== null,
++                agentFileChangeReportRequest !== null || turnDiffRoot !== null,
+                 clientSupportsCompaction(this.clientCapabilities),
+                 clientSupportsNotices(this.clientCapabilities),
+             );
+@@ -3478,7 +3483,12 @@ export class CodexAcpServer {
+                 return {
+                     stopReason: "end_turn",
+                     usage: this.buildPromptUsage(sessionState),
+-                    _meta: this.buildQuotaMeta(sessionState),
++                    _meta: this.completedPromptMeta(
++                        sessionState,
++                        eventHandler,
++                        turnDiffRoot,
++                        agentFileChangeReportTurnId,
++                    ),
+                 };
+             }
+ 
+@@ -3723,7 +3733,12 @@ export class CodexAcpServer {
+             return {
+                 stopReason: "end_turn",
+                 usage: this.buildPromptUsage(sessionState),
+-                _meta: this.buildQuotaMeta(sessionState),
++                _meta: this.completedPromptMeta(
++                    sessionState,
++                    eventHandler,
++                    turnDiffRoot,
++                    agentFileChangeReportTurnId,
++                ),
+             };
+         } catch (caught) {
+             const err = this.recovery?.mapError(caught, promptClient) ?? caught;
+@@ -3941,6 +3956,23 @@ export class CodexAcpServer {
+         };
+     }
+ 
++    private completedPromptMeta(
++        sessionState: SessionState,
++        eventHandler: CodexEventHandler,
++        turnDiffRoot: string | null,
++        turnDiffTurnId: string | null,
++    ): Record<string, unknown> {
++        return {
++            ...this.buildQuotaMeta(sessionState),
++            ...(turnDiffRoot === null || turnDiffTurnId === null ? {} : createTurnDiffMeta(
++                turnDiffTurnId,
++                turnDiffRoot,
++                eventHandler.getTurnDiff(turnDiffTurnId),
++                eventHandler.isTurnDiffOversized(turnDiffTurnId),
++            )),
++        };
++    }
++
+     private beginPromptTokenUsage(sessionState: SessionState): void {
+         sessionState.lastTokenUsage = null;
+         // A new thread starts at zero; the usage of a thread with history is unknown until Codex reports it.
+diff --git a/src/TurnDiffMeta.ts b/src/TurnDiffMeta.ts
+new file mode 100644
+index 0000000..00d103a
+--- /dev/null
++++ b/src/TurnDiffMeta.ts
+@@ -0,0 +1,31 @@
++import type {ClientCapabilities} from "@agentclientprotocol/sdk";
++import {isRecord} from "./permissions/json";
++
++export const CODEX_META_KEY = "codex";
++export const TURN_DIFF_META_KEY = "turnDiff";
++
++export type TurnDiffMeta =
++    | {status: "reported"; turnId: string; root: string; diff: string}
++    | {status: "unavailable"; turnId: string; reason: "tooLarge"};
++
++/** A client opts in with `initialize.clientCapabilities._meta.codex.turnDiff: true`. See `docs/turn-diff.md`. */
++export function clientSupportsTurnDiff(capabilities: ClientCapabilities | null | undefined): boolean {
++    const meta = capabilities?._meta;
++    const codex = isRecord(meta) ? meta[CODEX_META_KEY] : undefined;
++    return isRecord(codex) && codex[TURN_DIFF_META_KEY] === true;
++}
++
++export function createTurnDiffMeta(
++    turnId: string,
++    root: string,
++    diff: string,
++    oversized: boolean,
++): {[CODEX_META_KEY]: {[TURN_DIFF_META_KEY]: TurnDiffMeta}} {
++    return {
++        [CODEX_META_KEY]: {
++            [TURN_DIFF_META_KEY]: oversized
++                ? {status: "unavailable", turnId, reason: "tooLarge"}
++                : {status: "reported", turnId, root, diff},
++        },
++    };
++}
+diff --git a/src/__tests__/CodexACPAgent/turn-diff-meta.test.ts b/src/__tests__/CodexACPAgent/turn-diff-meta.test.ts
+new file mode 100644
+index 0000000..93c3a0c
+--- /dev/null
++++ b/src/__tests__/CodexACPAgent/turn-diff-meta.test.ts
+@@ -0,0 +1,135 @@
++import {beforeEach, describe, expect, it, vi} from "vitest";
++import * as acp from "@agentclientprotocol/sdk";
++import {
++    createCodexMockTestFixture,
++    createTestSessionState,
++    type CodexMockTestFixture,
++} from "../acp-test-utils";
++import type {SessionState} from "../../CodexAcpServer";
++import type {Turn} from "../../app-server/v2";
++import {AGENT_FILE_CHANGE_REPORT_MAX_DIFF_BYTES} from "../../AgentFileChangeReport";
++import {clientSupportsTurnDiff} from "../../TurnDiffMeta";
++
++const MAIN_DIFF = "diff --git a/notes/a.md b/notes/a.md\n--- a/notes/a.md\n+++ b/notes/a.md\n@@ -1 +1 @@\n-old\n+new\n";
++
++function createTurn(id: string, status: Turn["status"]): Turn {
++    return {
++        id,
++        items: [],
++        itemsView: "notLoaded",
++        status,
++        error: null,
++        startedAt: null,
++        completedAt: null,
++        durationMs: null,
++    };
++}
++
++async function setupPrompt(clientCapabilities?: acp.ClientCapabilities): Promise<{
++    fixture: CodexMockTestFixture;
++    sessionState: SessionState;
++    emitDiffBeforeCompletion: (diff: string) => void;
++}> {
++    const fixture = createCodexMockTestFixture();
++    await fixture.getCodexAcpAgent().initialize({
++        protocolVersion: acp.PROTOCOL_VERSION,
++        ...(clientCapabilities ? {clientCapabilities} : {}),
++    });
++    const sessionState = createTestSessionState({cwd: "/vault"});
++    vi.spyOn(fixture.getCodexAcpAgent(), "getSessionState").mockReturnValue(sessionState);
++    vi.spyOn(fixture.getCodexAppServerClient(), "turnStart")
++        .mockResolvedValue({turn: createTurn("main-turn", "inProgress")});
++    const awaitTurnCompleted = vi.spyOn(fixture.getCodexAppServerClient(), "awaitTurnCompleted")
++        .mockResolvedValue({threadId: sessionState.sessionId, turn: createTurn("main-turn", "completed")});
++    const emitDiffBeforeCompletion = (diff: string) => {
++        awaitTurnCompleted.mockImplementationOnce(async () => {
++            fixture.sendServerNotification({
++                method: "turn/diff/updated",
++                params: {threadId: sessionState.sessionId, turnId: "main-turn", diff},
++            });
++            return {threadId: sessionState.sessionId, turn: createTurn("main-turn", "completed")};
++        });
++    };
++    return {fixture, sessionState, emitDiffBeforeCompletion};
++}
++
++function prompt(sessionId: string): acp.PromptRequest {
++    return {sessionId, prompt: [{type: "text", text: "edit the note"}]};
++}
++
++const TURN_DIFF_CLIENT: acp.ClientCapabilities = {_meta: {codex: {turnDiff: true}}};
++
++describe("turn diff on the prompt response", () => {
++    beforeEach(() => {
++        vi.clearAllMocks();
++    });
++
++    it("returns Codex's final turn diff when the client opts in", async () => {
++        const {fixture, sessionState, emitDiffBeforeCompletion} = await setupPrompt(TURN_DIFF_CLIENT);
++        emitDiffBeforeCompletion(MAIN_DIFF);
++
++        const response = await fixture.getCodexAcpAgent().prompt(prompt(sessionState.sessionId));
++
++        expect(response).toMatchObject({
++            stopReason: "end_turn",
++            _meta: {
++                quota: expect.any(Object),
++                codex: {turnDiff: {status: "reported", turnId: "main-turn", root: "/vault", diff: MAIN_DIFF}},
++            },
++        });
++    });
++
++    it("reports an empty diff when the turn changed no files", async () => {
++        const {fixture, sessionState} = await setupPrompt(TURN_DIFF_CLIENT);
++
++        const response = await fixture.getCodexAcpAgent().prompt(prompt(sessionState.sessionId));
++
++        expect(response._meta).toMatchObject({
++            codex: {turnDiff: {status: "reported", turnId: "main-turn", diff: ""}},
++        });
++    });
++
++    it("reports tooLarge instead of sending a diff over the size limit", async () => {
++        const {fixture, sessionState, emitDiffBeforeCompletion} = await setupPrompt(TURN_DIFF_CLIENT);
++        emitDiffBeforeCompletion("x".repeat(AGENT_FILE_CHANGE_REPORT_MAX_DIFF_BYTES + 1));
++
++        const response = await fixture.getCodexAcpAgent().prompt(prompt(sessionState.sessionId));
++
++        expect(response._meta).toMatchObject({
++            codex: {turnDiff: {status: "unavailable", turnId: "main-turn", reason: "tooLarge"}},
++        });
++    });
++
++    it("leaves the prompt response unchanged for a client that did not opt in", async () => {
++        const {fixture, sessionState, emitDiffBeforeCompletion} = await setupPrompt();
++        emitDiffBeforeCompletion(MAIN_DIFF);
++
++        const response = await fixture.getCodexAcpAgent().prompt(prompt(sessionState.sessionId));
++
++        expect(response._meta).not.toHaveProperty("codex");
++    });
++
++    it("sends no diff for a cancelled prompt", async () => {
++        const {fixture, sessionState} = await setupPrompt(TURN_DIFF_CLIENT);
++        const cancellation = new AbortController();
++        cancellation.abort();
++
++        const response = await fixture.getCodexAcpAgent().prompt(
++            prompt(sessionState.sessionId),
++            cancellation.signal,
++        );
++
++        expect(response.stopReason).toBe("cancelled");
++        expect(response._meta ?? {}).not.toHaveProperty("codex");
++    });
++});
++
++describe("clientSupportsTurnDiff", () => {
++    it("accepts only an explicit true opt-in", () => {
++        expect(clientSupportsTurnDiff(TURN_DIFF_CLIENT)).toBe(true);
++        expect(clientSupportsTurnDiff({_meta: {codex: {turnDiff: "yes"}}})).toBe(false);
++        expect(clientSupportsTurnDiff({_meta: {codex: true}})).toBe(false);
++        expect(clientSupportsTurnDiff({})).toBe(false);
++        expect(clientSupportsTurnDiff(null)).toBe(false);
++    });
++});
+-- 
+2.43.0
+

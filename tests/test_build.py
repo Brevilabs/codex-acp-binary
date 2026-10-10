@@ -144,6 +144,57 @@ class BuildInputs(unittest.TestCase):
                 )
 
 
+class Patches(unittest.TestCase):
+    def fixture(self, root):
+        source = root / "upstream"
+        source.mkdir()
+
+        def git(*args):
+            subprocess.run(
+                ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *args],
+                cwd=source,
+                check=True,
+                capture_output=True,
+            )
+
+        git("init")
+        (source / "launch.ts").write_text("shell: true\n")
+        git("add", ".")
+        git("commit", "-m", "upstream")
+        patches = root / "patches"
+        patches.mkdir()
+        return source, patches
+
+    def write_patch(self, patches, name, before, after):
+        (patches / name).write_text(
+            "--- a/launch.ts\n+++ b/launch.ts\n@@ -1 +1 @@\n"
+            f"-{before}\n+{after}\n"
+        )
+
+    def test_applies_every_patch_in_file_name_order(self):
+        """https://github.com/Brevilabs/obsidian-copilot-private/issues/685"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source, patches = self.fixture(root)
+            self.write_patch(patches, "0002-second.patch", "shell: false", "shell: never")
+            self.write_patch(patches, "0001-first.patch", "shell: true", "shell: false")
+            with patch.object(build, "ROOT", root):
+                build.apply_patches(source)
+            self.assertEqual((source / "launch.ts").read_text(), "shell: never\n")
+
+    def test_stops_the_build_naming_a_patch_that_no_longer_applies(self):
+        """https://github.com/Brevilabs/obsidian-copilot-private/issues/685"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source, patches = self.fixture(root)
+            self.write_patch(patches, "0001-stale.patch", "shell: cmd", "shell: false")
+            with (
+                patch.object(build, "ROOT", root),
+                self.assertRaisesRegex(SystemExit, "0001-stale.patch no longer applies"),
+            ):
+                build.apply_patches(source)
+
+
 class Archives(unittest.TestCase):
     @unittest.skipIf(os.name == "nt" or not shutil.which("tar"), "requires POSIX tar")
     def test_linux_archives_extract_with_system_tar_and_preserve_executables(self):
