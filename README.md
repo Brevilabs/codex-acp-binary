@@ -42,9 +42,8 @@ Pin it to the release Copilot ships or is adopting next (`CODEX_PINNED_VERSION` 
 Copilot) so PR builds test that release.
 Nightly and manual runs resolve the latest stable upstream tag to an exact commit,
 lockfile digest and locked Codex version/commit. Bun stays pinned.
-Candidate pins are saved with each archive. Upstream tests use POSIX path snapshots
-and a Windows `.cmd` fixture incompatible with our direct native launch; Windows
-validation uses typechecking and the real packaged executable smoke tests instead.
+Candidate pins are saved with each archive. Upstream tests use POSIX path snapshots, so
+Windows validation uses typechecking and the real packaged executable smoke tests instead.
 All six targets must pass those package tests. The build applies the Copilot patches in
 [`patches/`](patches/README.md) to upstream before testing; a patch that no longer applies
 stops the build for review rather than being dropped.

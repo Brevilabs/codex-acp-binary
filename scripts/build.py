@@ -25,8 +25,8 @@ def sha256(path):
 
 
 def check_upstream(source, target):
-    # Upstream tests require POSIX snapshots and a .cmd shim on Windows; our
-    # native-only launcher is verified by real package smoke tests on every OS.
+    # Upstream tests require POSIX path snapshots; Windows packages are verified by
+    # real package smoke tests instead.
     # https://github.com/Brevilabs/obsidian-copilot-private/issues/378
     if not target.startswith("win32-"):
         run("npm", "test", cwd=source)

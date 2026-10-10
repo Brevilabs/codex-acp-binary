@@ -53,9 +53,9 @@ archive on a clean Mac. We do not instruct users to disable Gatekeeper.
 
 ## Human verification
 
-With an explicitly authorized test account, test `codex-acp cli login` in the normal
-profile, then authenticate an ACP client, complete a conversation, execute a tool,
+With an explicitly authorized test account, test `codex-runtime/bin/codex login` in the
+normal profile, then authenticate an ACP client, complete a conversation, execute a tool,
 and cancel a running turn. Check existing-profile login reuse and a new profile.
 Do not commit credentials or authentication-bearing logs. Automated smoke tests use
-an isolated profile and prove startup, CLI/login help, helper loading, EOF shutdown,
+an isolated profile and prove startup, Codex CLI and login help, helper loading, EOF shutdown,
 and process-group termination only. They do not prove OAuth or authenticated tools.

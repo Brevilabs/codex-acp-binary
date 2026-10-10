@@ -59,15 +59,12 @@ class PackageSmoke(unittest.TestCase):
     def test_version_cli_login_and_helpers_without_external_runtime(self):
         """https://github.com/Brevilabs/obsidian-copilot-private/issues/377"""
         pins = json.loads((self.package / "provenance.json").read_text())
+        codex = self.package / ("codex-runtime/bin/codex" + self.extension)
         for binary, args, expected in [
             (self.binary, ["--version"], pins["acpVersion"]),
-            (self.binary, ["cli", "--help"], "Codex CLI"),
-            (self.binary, ["cli", "login", "--help"], "login"),
-            (
-                self.package / ("codex-runtime/bin/codex" + self.extension),
-                ["--version"],
-                pins["codexVersion"],
-            ),
+            (codex, ["--version"], pins["codexVersion"]),
+            (codex, ["--help"], "Codex CLI"),
+            (codex, ["login", "--help"], "login"),
             (
                 self.package / ("codex-runtime/codex-path/rg" + self.extension),
                 ["--version"],

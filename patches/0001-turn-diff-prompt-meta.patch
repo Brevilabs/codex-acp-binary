@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Zero Liu <zerolxy@gmail.com>
 Date: Fri, 9 Oct 2026 16:43:39 -0700
-Subject: [PATCH 2/2] feat: return the Codex turn diff on the prompt response
+Subject: [PATCH] feat: return the Codex turn diff on the prompt response
 
 Clients that opt in with clientCapabilities._meta.codex.turnDiff get the
 final turn/diff/updated payload of a completed turn in the session/prompt
