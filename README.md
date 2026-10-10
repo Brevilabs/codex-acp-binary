@@ -38,13 +38,15 @@ publication does not certify those checks.
 ## Candidate builds and releases
 
 PRs build the reviewed `inputs.json` on all six native standard GitHub runners.
+Pin it to the release Copilot ships or is adopting next (`CODEX_PINNED_VERSION` in
+Copilot) so PR builds test that release.
 Nightly and manual runs resolve the latest stable upstream tag to an exact commit,
 lockfile digest and locked Codex version/commit. Bun stays pinned.
-Candidate pins are saved with each archive. Upstream tests use POSIX path snapshots
-and a Windows `.cmd` fixture incompatible with our direct native launch; Windows
-validation uses typechecking and the real packaged executable smoke tests instead.
-All six targets must pass those package tests. Source layout changes stop the build for
-review rather than silently dropping our native Windows launch patch.
+Candidate pins are saved with each archive. Upstream tests use POSIX path snapshots, so
+Windows validation uses typechecking and the real packaged executable smoke tests instead.
+All six targets must pass those package tests. The build applies the Copilot patches in
+[`patches/`](patches/README.md) to upstream before testing; a patch that no longer applies
+stops the build for review rather than being dropped.
 
 Nightly runs check at 07:23 UTC and skip versions that already have a published
 release. Manual dispatch rebuilds and replaces the selected stable tag, or the latest

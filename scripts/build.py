@@ -25,12 +25,20 @@ def sha256(path):
 
 
 def check_upstream(source, target):
-    # Upstream tests require POSIX snapshots and a .cmd shim on Windows; our
-    # native-only launcher is verified by real package smoke tests on every OS.
+    # Upstream tests require POSIX path snapshots; Windows packages are verified by
+    # real package smoke tests instead.
     # https://github.com/Brevilabs/obsidian-copilot-private/issues/378
     if not target.startswith("win32-"):
         run("npm", "test", cwd=source)
     run("npm", "run", "typecheck", cwd=source)
+
+
+def apply_patches(source):
+    # Copilot-specific changes; patches/README.md links each one to its upstream issue.
+    # https://github.com/Brevilabs/obsidian-copilot-private/issues/685
+    for patch in sorted((ROOT / "patches").glob("*.patch")):
+        if subprocess.run(["git", "apply", "--3way", str(patch)], cwd=source).returncode:
+            raise SystemExit(f"{patch.name} no longer applies; see patches/README.md")
 
 
 def create_archive(package, dist, target):
@@ -96,23 +104,7 @@ def build():
         != pins["codexVersion"] + "-" + target
     ):
         raise SystemExit("Locked native Codex version does not match inputs")
-    # Native .exe launches must bypass cmd.exe so relocated paths with spaces work.
-    # https://github.com/Brevilabs/obsidian-copilot-private/issues/378
-    patches = {
-        "CodexCli.ts": ('shell: process.platform === "win32"', "shell: false"),
-        "CodexJsonRpcConnection.ts": (
-            """process.platform === 'win32'
-            ? spawn(`"${codexPath}" app-server`, { shell: true, env: spawnEnv })
-            : spawn(codexPath, ['app-server'], { env: spawnEnv })""",
-            "spawn(codexPath, ['app-server'], { env: spawnEnv })",
-        ),
-    }
-    for filename, (needle, replacement) in patches.items():
-        path = source / "src" / filename
-        text = path.read_text()
-        if text.count(needle) != 1:
-            raise SystemExit("Upstream native spawn patch needs review")
-        path.write_text(text.replace(needle, replacement))
+    apply_patches(source)
     check_upstream(source, target)
     name = f"codex-acp-v{pins['acpVersion']}-{target}"
     package = work / name

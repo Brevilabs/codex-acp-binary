@@ -1,0 +1,3 @@
+# Patches must keep upstream line endings for git apply on Windows runners, where checkout converts text to CRLF.
+# https://github.com/Brevilabs/obsidian-copilot-private/issues/685
+*.patch -text

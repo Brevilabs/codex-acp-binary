@@ -21,7 +21,8 @@ See [Bun licensing](https://bun.com/docs/project/license) and the versions and c
 in `provenance.json`. Source links alone do not establish compliance.
 
 Our modifications are the adapter entrypoint, which selects the adjacent bundled native
-Codex executable, and direct native process spawning in both upstream launch sites. It preserves `CODEX_HOME` and never copies credentials. This is an
+Codex executable, and the source patches listed in [`patches/README.md`](patches/README.md).
+The entrypoint preserves `CODEX_HOME` and never copies credentials. This is an
 independent Brevilabs package, not an official OpenAI release.
 
 ## Platform support and signing
@@ -52,9 +53,9 @@ archive on a clean Mac. We do not instruct users to disable Gatekeeper.
 
 ## Human verification
 
-With an explicitly authorized test account, test `codex-acp cli login` in the normal
-profile, then authenticate an ACP client, complete a conversation, execute a tool,
+With an explicitly authorized test account, test `codex-runtime/bin/codex login` in the
+normal profile, then authenticate an ACP client, complete a conversation, execute a tool,
 and cancel a running turn. Check existing-profile login reuse and a new profile.
 Do not commit credentials or authentication-bearing logs. Automated smoke tests use
-an isolated profile and prove startup, CLI/login help, helper loading, EOF shutdown,
+an isolated profile and prove startup, Codex CLI and login help, helper loading, EOF shutdown,
 and process-group termination only. They do not prove OAuth or authenticated tools.
