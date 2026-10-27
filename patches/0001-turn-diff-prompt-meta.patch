@@ -12,8 +12,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  docs/turn-diff.md                             |  44 ++++++
  src/CodexAcpServer.ts                         |  38 ++++-
  src/TurnDiffMeta.ts                           |  31 ++++
- .../CodexACPAgent/turn-diff-meta.test.ts      | 135 ++++++++++++++++++
- 4 files changed, 245 insertions(+), 3 deletions(-)
+ .../CodexACPAgent/turn-diff-meta.test.ts      | 136 ++++++++++++++++++
+ 4 files changed, 246 insertions(+), 3 deletions(-)
  create mode 100644 docs/turn-diff.md
  create mode 100644 src/TurnDiffMeta.ts
  create mode 100644 src/__tests__/CodexACPAgent/turn-diff-meta.test.ts
@@ -69,10 +69,10 @@ index 0000000..7554545
 +
 +A client that does not opt in gets the same prompt response as before. AIR clients can keep using the [agent file-change report](air-extensions.md#agent-file-change-report), which sends the changed paths without the diff text.
 diff --git a/src/CodexAcpServer.ts b/src/CodexAcpServer.ts
-index d3f90a8..a2b3db3 100644
+index 3f7f160..48af30e 100644
 --- a/src/CodexAcpServer.ts
 +++ b/src/CodexAcpServer.ts
-@@ -189,6 +189,7 @@ import {
+@@ -225,6 +225,7 @@ import {
      createUnavailableAgentFileChangeReport,
      parseAgentFileChangeReportRequest,
  } from "./AgentFileChangeReport";
@@ -80,7 +80,7 @@ index d3f90a8..a2b3db3 100644
  
  
  export interface SessionState extends SessionIndexTitleState {
-@@ -3267,6 +3268,10 @@ export class CodexAcpServer {
+@@ -4440,6 +4441,10 @@ export class CodexAcpServer {
          const agentFileChangeWorkspace = agentFileChangeReportRequest === null
              ? null
              : captureAgentFileChangeWorkspace(sessionState.cwd, sessionState.additionalDirectories);
@@ -91,7 +91,7 @@ index d3f90a8..a2b3db3 100644
          let agentFileChangeReportTurnId: string | null = null;
          let agentFileChangeReportUnavailableReason: AgentFileChangeReportUnavailableReason = "providerError";
          let promptWasCancelled = false;
-@@ -3348,7 +3353,7 @@ export class CodexAcpServer {
+@@ -4537,7 +4542,7 @@ export class CodexAcpServer {
                  this.sessionFailureEpoch,
                  sessionState.subagents,
                  (accountUpdated) => this.handleAccountUpdated(accountUpdated),
@@ -100,7 +100,7 @@ index d3f90a8..a2b3db3 100644
                  clientSupportsCompaction(this.clientCapabilities),
                  clientSupportsNotices(this.clientCapabilities),
              );
-@@ -3478,7 +3483,12 @@ export class CodexAcpServer {
+@@ -4705,7 +4710,12 @@ export class CodexAcpServer {
                  return {
                      stopReason: "end_turn",
                      usage: this.buildPromptUsage(sessionState),
@@ -114,7 +114,7 @@ index d3f90a8..a2b3db3 100644
                  };
              }
  
-@@ -3723,7 +3733,12 @@ export class CodexAcpServer {
+@@ -4980,7 +4990,12 @@ export class CodexAcpServer {
              return {
                  stopReason: "end_turn",
                  usage: this.buildPromptUsage(sessionState),
@@ -128,7 +128,7 @@ index d3f90a8..a2b3db3 100644
              };
          } catch (caught) {
              const err = this.recovery?.mapError(caught, promptClient) ?? caught;
-@@ -3941,6 +3956,23 @@ export class CodexAcpServer {
+@@ -5213,6 +5228,23 @@ export class CodexAcpServer {
          };
      }
  
@@ -191,10 +191,10 @@ index 0000000..00d103a
 +}
 diff --git a/src/__tests__/CodexACPAgent/turn-diff-meta.test.ts b/src/__tests__/CodexACPAgent/turn-diff-meta.test.ts
 new file mode 100644
-index 0000000..93c3a0c
+index 0000000..bfd8096
 --- /dev/null
 +++ b/src/__tests__/CodexACPAgent/turn-diff-meta.test.ts
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,136 @@
 +import {beforeEach, describe, expect, it, vi} from "vitest";
 +import * as acp from "@agentclientprotocol/sdk";
 +import {
@@ -212,6 +212,7 @@ index 0000000..93c3a0c
 +function createTurn(id: string, status: Turn["status"]): Turn {
 +    return {
 +        id,
++        rootTurnId: null,
 +        items: [],
 +        itemsView: "notLoaded",
 +        status,
@@ -331,5 +332,5 @@ index 0000000..93c3a0c
 +    });
 +});
 -- 
-2.43.0
+2.54.0 (Apple Git-157)
 
