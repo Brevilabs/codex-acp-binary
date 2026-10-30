@@ -1,8 +1,8 @@
 {
-  "acpVersion": "2.2.2",
-  "acpCommit": "202e66e63343ec4f5a5e35ab590251d813d129ca",
-  "lockSha256": "9639b8ea878a932feca646329c09b1f4622ee794200a617d56e58c797d573851",
+  "acpVersion": "2.3.0",
+  "acpCommit": "344a520632e4c8c02f781a7a20490dfac52d4d0a",
+  "lockSha256": "ba5712b0dda4f8d5a820e8eb249004dee5b8254a493cd664c4f7956d6305f7a9",
   "bunRevision": "1.3.14+0d9b296af",
-  "codexVersion": "0.160.1",
-  "codexCommit": "d27764b82f7118f674371e6d6e76271d9d606edb"
+  "codexVersion": "0.164.0",
+  "codexCommit": "6aaac694803004a63c6f393d153c96d22521a6b9"
 }
