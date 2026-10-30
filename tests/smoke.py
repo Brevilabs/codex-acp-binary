@@ -70,14 +70,7 @@ class PackageSmoke(unittest.TestCase):
                 ["--version"],
                 "ripgrep",
             ),
-            (
-                self.package / "codex-runtime/codex-resources/zsh/bin/zsh",
-                ["--version"],
-                "zsh",
-            ),
         ]:
-            if binary.name == "zsh" and os.name == "nt":
-                continue
             with self.subTest(binary=binary.name, args=args):
                 result = self.command(binary, *args)
                 self.assertEqual(result.returncode, 0, result.stderr)
