@@ -69,18 +69,18 @@ index 0000000..7554545
 +
 +A client that does not opt in gets the same prompt response as before. AIR clients can keep using the [agent file-change report](air-extensions.md#agent-file-change-report), which sends the changed paths without the diff text.
 diff --git a/src/CodexAcpServer.ts b/src/CodexAcpServer.ts
-index a330aec..d94aba8 100644
+index 051ddac..a967209 100644
 --- a/src/CodexAcpServer.ts
 +++ b/src/CodexAcpServer.ts
-@@ -240,6 +240,7 @@ import {
+@@ -271,6 +271,7 @@ import {
      createUnavailableAgentFileChangeReport,
      parseAgentFileChangeReportRequest,
  } from "./AgentFileChangeReport";
 +import {clientSupportsTurnDiff, createTurnDiffMeta} from "./TurnDiffMeta";
  
  
- export interface SessionState extends SessionIndexTitleState {
-@@ -4914,6 +4915,10 @@ export class CodexAcpServer {
+ interface SessionOptionState {
+@@ -5446,6 +5447,10 @@ export class CodexAcpServer {
          const agentFileChangeWorkspace = agentFileChangeReportRequest === null
              ? null
              : captureAgentFileChangeWorkspace(sessionState.cwd, sessionState.additionalDirectories);
@@ -91,16 +91,16 @@ index a330aec..d94aba8 100644
          let agentFileChangeReportTurnId: string | null = null;
          let agentFileChangeReportUnavailableReason: AgentFileChangeReportUnavailableReason = "providerError";
          let promptWasCancelled = false;
-@@ -5011,7 +5016,7 @@ export class CodexAcpServer {
+@@ -5535,7 +5540,7 @@ export class CodexAcpServer {
+                 clientSupportsTypedSessionFailures(this.clientCapabilities),
                  this.sessionFailureIds,
                  sessionState.subagents,
-                 (accountUpdated) => this.handleAccountUpdated(accountUpdated),
 -                agentFileChangeReportRequest !== null,
 +                agentFileChangeReportRequest !== null || turnDiffRoot !== null,
                  clientSupportsCompaction(this.clientCapabilities),
                  clientSupportsNotices(this.clientCapabilities),
              );
-@@ -5182,7 +5187,12 @@ export class CodexAcpServer {
+@@ -5697,7 +5702,12 @@ export class CodexAcpServer {
                  return {
                      stopReason: "end_turn",
                      usage: this.buildPromptUsage(sessionState),
@@ -114,7 +114,7 @@ index a330aec..d94aba8 100644
                  };
              }
  
-@@ -5457,7 +5467,12 @@ export class CodexAcpServer {
+@@ -5980,7 +5990,12 @@ export class CodexAcpServer {
              return {
                  stopReason: "end_turn",
                  usage: this.buildPromptUsage(sessionState),
@@ -128,7 +128,7 @@ index a330aec..d94aba8 100644
              };
          } catch (caught) {
              const err = this.recovery?.mapError(caught, promptClient) ?? caught;
-@@ -5704,6 +5719,23 @@ export class CodexAcpServer {
+@@ -6225,6 +6240,23 @@ export class CodexAcpServer {
          };
      }
  
@@ -332,5 +332,5 @@ index 0000000..bfd8096
 +    });
 +});
 -- 
-2.43.0
+2.54.0 (Apple Git-157)
 
